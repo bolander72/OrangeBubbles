@@ -3,10 +3,12 @@ import Security
 
 /// Source of the input key material that encrypts the iCloud backup.
 ///
-/// V0 ships `SyncedKeychainKeyProvider`. A passkey-PRF provider (Face ID
-/// assertion → PRF extension output → HKDF) plugs in behind the same
-/// protocol once we've validated PRF availability inside Messages
-/// extensions on real devices — see docs/decisions/0002-encryption-path.md.
+/// Two implementations: `PasskeyPRFKeyProvider` (app layer, iOS 18+ —
+/// Face ID assertion → PRF extension output → HKDF; preferred, requires the
+/// AASA file live on the relying-party domain) and
+/// `SyncedKeychainKeyProvider` (fallback). The envelope's `keyProvider`
+/// field records which one sealed a backup — see
+/// docs/decisions/0002-encryption-path.md.
 public protocol BackupKeyProvider: Sendable {
     /// Stable identifier recorded in the envelope so restore knows which
     /// provider to ask for the key.

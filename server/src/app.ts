@@ -45,6 +45,16 @@ export function buildApp(deps: AppDeps): Hono {
 
   app.get("/healthz", (c) => c.json({ ok: true }));
 
+  // Apple App Site Association — required for the wallet passkey (PRF) to be
+  // scoped to this domain. This is the only thing the domain *must* serve;
+  // everything else in this server is optional.
+  app.get("/.well-known/apple-app-site-association", (c) => {
+    if (config.appleAppIds.length === 0) {
+      return c.json({ error: "APPLE_APP_IDS not configured" }, 503);
+    }
+    return c.json({ webcredentials: { apps: config.appleAppIds } });
+  });
+
   app.get("/v1/fees", async (c) => c.json(await feeService.recommended()));
 
   const ex = new Hono();

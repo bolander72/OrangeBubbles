@@ -110,7 +110,7 @@ Implementation phases (from the product spec) and where they stand:
 | 5. Balance/UTXO lookup | ✅ built (Esplora sync) |
 | 6. PSBT construction + signing | ✅ built |
 | 7. Broadcast + tx status | ✅ built |
-| 8. Face ID/passkey unlock polish | 🔶 Face ID done; passkey-PRF key derivation is the follow-up (ADR 0002) |
+| 8. Face ID/passkey unlock polish | 🔶 Face ID done; passkey-PRF provider implemented, activates once the AASA file is live on wallet.taprootwizards.com (ADR 0002) |
 | 9. Reinstall/restore testing | ⬜ needs physical devices |
 | 10. Physical iPhone testing | ⬜ needs signing + devices |
 

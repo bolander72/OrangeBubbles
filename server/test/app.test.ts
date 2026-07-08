@@ -13,6 +13,7 @@ const config: Config = {
   esploraUpstream: "https://esplora.test/api",
   mempoolUpstream: "https://mempool.test/api",
   feeCacheSeconds: 30,
+  appleAppIds: ["TEAM123.com.taprootwizards.imessagewallet.MessagesExtension"],
 };
 
 function fakeFetch(routes: Record<string, { status?: number; body: string | object }>): {
@@ -146,6 +147,26 @@ describe("app routes", () => {
     const res = await app.request("/esplora/tx", { method: "POST", body: "hello" });
     expect(res.status).toBe(400);
     expect(calls.length).toBe(0);
+  });
+
+  it("serves the AASA file for passkey domain association", async () => {
+    const { fetchImpl } = fakeFetch({});
+    const app = buildApp({ config, fetchImpl });
+
+    const res = await app.request("/.well-known/apple-app-site-association");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({
+      webcredentials: { apps: ["TEAM123.com.taprootwizards.imessagewallet.MessagesExtension"] },
+    });
+  });
+
+  it("returns 503 from AASA route when app ids are not configured", async () => {
+    const { fetchImpl } = fakeFetch({});
+    const app = buildApp({ config: { ...config, appleAppIds: [] }, fetchImpl });
+
+    const res = await app.request("/.well-known/apple-app-site-association");
+    expect(res.status).toBe(503);
   });
 
   it("proxies tx status", async () => {

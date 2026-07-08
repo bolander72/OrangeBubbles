@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import WalletKit
 
@@ -27,10 +28,15 @@ final class WalletStore: ObservableObject {
     @Published private(set) var backupInICloud = true
 
     let chain: ChainConfig
+    /// Wired by MessagesViewController; passkey sheets need a window.
+    var presentationAnchor: @MainActor () -> ASPresentationAnchor? = { nil }
 
     private var engine: WalletEngine?
     private var secrets: WalletSecrets?
-    private let keyProvider = SyncedKeychainKeyProvider()
+    /// Key material + provider id used this session, cached (memory only)
+    /// so resealing the backup never re-prompts Face ID/passkey.
+    private var sessionKey: (material: Data, provider: String)?
+    private let keychainProvider = SyncedKeychainKeyProvider()
     private let backupStore = ICloudBackupStore()
     private let faceID = FaceIDGate()
     private let feeEstimator = FeeEstimator()
@@ -55,10 +61,12 @@ final class WalletStore: ObservableObject {
         phase = .welcome(hasBackup: backupStore.backupExists())
     }
 
-    /// One tap: Face ID → new seed → wallet → encrypted iCloud backup.
+    /// One tap: Face ID (passkey registration when available, LAContext
+    /// otherwise) → new seed → wallet → encrypted iCloud backup.
     func createWallet() async {
         do {
-            try await faceID.authenticate(reason: "Create your Bitcoin wallet")
+            phase = .working("Setting up Face ID…")
+            sessionKey = try await establishKeyForNewWallet()
             phase = .working("Creating your wallet…")
 
             let secrets = WalletEngine.generateSecrets(network: chain.network)
@@ -80,19 +88,16 @@ final class WalletStore: ObservableObject {
         }
     }
 
-    /// Face ID → fetch envelope from iCloud → decrypt with the synced
-    /// keychain key → rebuild the deterministic wallet → rescan.
+    /// Fetch envelope from iCloud → authenticate with whichever key
+    /// provider sealed it → decrypt → rebuild the deterministic wallet →
+    /// rescan.
     func restoreWallet() async {
         do {
-            try await faceID.authenticate(reason: "Unlock your Bitcoin wallet")
             phase = .working("Restoring from iCloud…")
-
             let envelope = try await backupStore.load()
-            guard let keyMaterial = try await keyProvider.existingKeyMaterial() else {
-                throw WalletKitError.keyUnavailable(
-                    "Backup key hasn't synced to this device yet. Make sure iCloud Keychain is on, then try again."
-                )
-            }
+
+            let keyMaterial = try await keyMaterialForRestore(of: envelope)
+            sessionKey = (keyMaterial, envelope.keyProvider)
             let secrets = try BackupCrypto.open(envelope, inputKeyMaterial: keyMaterial)
 
             let storageDir = Self.walletStorageDirectory()
@@ -164,22 +169,69 @@ final class WalletStore: ObservableObject {
         return txid
     }
 
+    // MARK: - Key providers
+
+    /// New wallets prefer the passkey-PRF provider (iOS 18+): registration
+    /// shows its own Face ID sheet and the PRF output becomes the key. If
+    /// that fails at runtime (domain/AASA not reachable, unsupported, user
+    /// declined the passkey), fall back to the synced-keychain provider
+    /// gated by an LAContext Face ID prompt — ADR 0002.
+    private func establishKeyForNewWallet() async throws -> (material: Data, provider: String) {
+        if #available(iOS 18.0, *) {
+            let prf = PasskeyPRFKeyProvider(anchor: presentationAnchor)
+            if let material = try? await prf.keyMaterial() {
+                return (material, prf.identifier)
+            }
+        }
+        try await faceID.authenticate(reason: "Create your Bitcoin wallet")
+        return (try await keychainProvider.keyMaterial(), keychainProvider.identifier)
+    }
+
+    /// Restore must use the provider recorded in the envelope: a passkey
+    /// assertion for "passkey-prf" (which *is* the Face ID gate), or
+    /// LAContext + the synced keychain key otherwise.
+    private func keyMaterialForRestore(of envelope: BackupEnvelope) async throws -> Data {
+        switch envelope.keyProvider {
+        case "passkey-prf":
+            guard #available(iOS 18.0, *) else {
+                throw WalletKitError.keyUnavailable(
+                    "This backup is protected by a passkey and needs iOS 18 or later."
+                )
+            }
+            let prf = PasskeyPRFKeyProvider(anchor: presentationAnchor)
+            guard let material = try await prf.existingKeyMaterial() else {
+                throw WalletKitError.keyUnavailable(
+                    "Couldn't reach the wallet passkey. Check that iCloud Keychain is on and try again."
+                )
+            }
+            return material
+        default:
+            try await faceID.authenticate(reason: "Unlock your Bitcoin wallet")
+            guard let material = try await keychainProvider.existingKeyMaterial() else {
+                throw WalletKitError.keyUnavailable(
+                    "Backup key hasn't synced to this device yet. Make sure iCloud Keychain is on, then try again."
+                )
+            }
+            return material
+        }
+    }
+
     // MARK: - Backup
 
     /// Reseals the backup with current index hints. Called after wallet
-    /// creation and whenever new addresses are revealed.
+    /// creation and whenever new addresses are revealed. Uses the
+    /// session-cached key so it never re-prompts the user.
     private func persistBackup() async throws {
-        guard let engine, var secrets else { return }
+        guard let engine, var secrets, let sessionKey else { return }
         let indexes = engine.revealedIndexes()
         secrets.receiveIndexHint = indexes.receive
         secrets.changeIndexHint = indexes.change
         self.secrets = secrets
 
-        let keyMaterial = try await keyProvider.keyMaterial()
         let envelope = try BackupCrypto.seal(
             secrets,
-            inputKeyMaterial: keyMaterial,
-            keyProvider: keyProvider.identifier
+            inputKeyMaterial: sessionKey.material,
+            keyProvider: sessionKey.provider
         )
         try backupStore.save(envelope)
         backupInICloud = backupStore.isUsingICloud

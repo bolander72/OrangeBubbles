@@ -52,6 +52,8 @@ targets:
           - iCloud.com.taprootwizards.imessagewallet
         com.apple.developer.icloud-services:
           - CloudDocuments
+        com.apple.developer.associated-domains:
+          - webcredentials:wallet.taprootwizards.com
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.taprootwizards.imessagewallet.shared
 
@@ -86,5 +88,7 @@ targets:
           - iCloud.com.taprootwizards.imessagewallet
         com.apple.developer.icloud-services:
           - CloudDocuments
+        com.apple.developer.associated-domains:
+          - webcredentials:wallet.taprootwizards.com
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.taprootwizards.imessagewallet.shared

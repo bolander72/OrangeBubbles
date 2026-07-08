@@ -11,6 +11,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         bridge.controller = self
+        store.presentationAnchor = { [weak self] in self?.view.window }
 
         let hosting = UIHostingController(rootView: RootView(store: store, bridge: bridge))
         addChild(hosting)
