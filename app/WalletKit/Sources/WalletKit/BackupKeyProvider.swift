@@ -57,7 +57,7 @@ public struct SyncedKeychainKeyProvider: BackupKeyProvider {
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecValueData: bytes,
-            kSecAttrSynchronizable: true,
+            kSecAttrSynchronizable: Self.synchronizable,
             kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
             kSecAttrLabel: "Wizard Wallet backup key",
         ]
@@ -70,6 +70,18 @@ public struct SyncedKeychainKeyProvider: BackupKeyProvider {
             throw WalletKitError.keyUnavailable("keychain add failed (\(status))")
         }
         return bytes
+    }
+
+    /// iCloud Keychain sync requires an app-identifier entitlement that
+    /// simulator builds don't carry (SecItem returns -34018), and simulator
+    /// keychains never actually sync — so only mark items synchronizable on
+    /// real devices.
+    private static var synchronizable: Bool {
+        #if targetEnvironment(simulator)
+            return false
+        #else
+            return true
+        #endif
     }
 
     public func existingKeyMaterial() async throws -> Data? {
