@@ -27,11 +27,14 @@ public struct ChainConfig: Sendable {
         explorerTxBase: URL(string: "https://mempool.space/tx")!
     )
 
+    /// Standard signet (mempool.space). Faucets: signetfaucet.com and
+    /// others — most are open, unlike Mutinynet's authenticated faucet.
+    /// Blocks average ~10 minutes.
     public static let signet = ChainConfig(
         network: .signet,
-        esploraURL: URL(string: "https://mutinynet.com/api")!,
-        feesURL: URL(string: "https://mutinynet.com/api/v1/fees/recommended")!,
-        explorerTxBase: URL(string: "https://mutinynet.com/tx")!
+        esploraURL: URL(string: "https://mempool.space/signet/api")!,
+        feesURL: URL(string: "https://mempool.space/signet/api/v1/fees/recommended")!,
+        explorerTxBase: URL(string: "https://mempool.space/signet/tx")!
     )
 
     public func explorerURL(txid: String) -> URL {

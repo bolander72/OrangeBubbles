@@ -71,8 +71,9 @@ final class WalletStore: ObservableObject {
 
             let secrets = WalletEngine.generateSecrets(network: chain.network)
             let storageDir = Self.walletStorageDirectory()
+            let cacheKey = chain.esploraURL.host ?? ""
             let engine = try await Self.offMain {
-                try WalletEngine(secrets: secrets, storageDirectory: storageDir)
+                try WalletEngine(secrets: secrets, storageDirectory: storageDir, cacheDiscriminator: cacheKey)
             }
             self.engine = engine
             self.secrets = secrets
@@ -101,8 +102,9 @@ final class WalletStore: ObservableObject {
             let secrets = try BackupCrypto.open(envelope, inputKeyMaterial: keyMaterial)
 
             let storageDir = Self.walletStorageDirectory()
+            let cacheKey = chain.esploraURL.host ?? ""
             let engine = try await Self.offMain {
-                try WalletEngine(secrets: secrets, storageDirectory: storageDir)
+                try WalletEngine(secrets: secrets, storageDirectory: storageDir, cacheDiscriminator: cacheKey)
             }
             self.engine = engine
             self.secrets = secrets
@@ -266,8 +268,8 @@ final class WalletStore: ObservableObject {
 
 extension ChainConfig {
     /// Network is a build setting (`WALLET_NETWORK` → Info.plist `WalletNetwork`):
-    /// Debug builds default to signet (Mutinynet) so the team can test with
-    /// free coins; Release is mainnet.
+    /// Debug builds default to standard signet so the team can test with
+    /// free faucet coins; Release is mainnet.
     static func fromBundle(_ bundle: Bundle = .main) -> ChainConfig {
         switch bundle.object(forInfoDictionaryKey: "WalletNetwork") as? String {
         case "signet": return .signet

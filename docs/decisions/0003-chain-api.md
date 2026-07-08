@@ -5,7 +5,7 @@
 ## Decision
 
 V0 clients talk directly to a public Esplora-compatible API
-(mempool.space mainnet; Mutinynet for debug/signet) for UTXOs, tx status,
+(mempool.space, mainnet and signet) for UTXOs, tx status,
 fee rates, and broadcast. We do **not** upload xpubs/descriptors to any
 Taproot Wizards backend, and the optional `server/` proxy only ever sees the
 same per-address queries.

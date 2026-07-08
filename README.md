@@ -46,9 +46,9 @@ Then in Xcode: set your team under Signing & Capabilities, pick a simulator or
 device, and run the **WizardWallet** scheme. In the simulator, open Messages →
 any conversation → app strip → Wizard Wallet.
 
-- **Debug builds run on signet** ([Mutinynet](https://mutinynet.com) — 30s
-  blocks, free coins from the faucet). Release builds are mainnet. Override
-  with the `WALLET_NETWORK` build setting.
+- **Debug builds run on standard signet** (free coins from e.g.
+  [signetfaucet.com](https://signetfaucet.com), ~10-minute blocks). Release
+  builds are mainnet. Override with the `WALLET_NETWORK` build setting.
 - Real Face ID, iCloud Drive, and iCloud Keychain behavior needs a physical
   device signed into iCloud; the simulator approximates them.
 

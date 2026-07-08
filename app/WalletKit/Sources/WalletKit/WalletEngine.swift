@@ -31,7 +31,12 @@ public final class WalletEngine: @unchecked Sendable {
 
     /// Builds (or reopens) the wallet for the given secrets. `storageDirectory`
     /// holds BDK's local chain cache — deletable at any time, resyncable.
-    public init(secrets: WalletSecrets, storageDirectory: URL) throws {
+    ///
+    /// `cacheDiscriminator` must identify the chain *backend* (e.g. the
+    /// Esplora host): two different signet-family chains (standard signet
+    /// vs Mutinynet) share a network name but have incompatible histories,
+    /// and reusing one's cache for the other fails with CannotConnectError.
+    public init(secrets: WalletSecrets, storageDirectory: URL, cacheDiscriminator: String = "") throws {
         self.network = secrets.network
         self.scriptType = secrets.scriptType
 
@@ -51,7 +56,11 @@ public final class WalletEngine: @unchecked Sendable {
         }
 
         try FileManager.default.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
-        let dbPath = storageDirectory.appendingPathComponent("bdk-\(secrets.network.rawValue).sqlite").path
+        let safeDiscriminator = cacheDiscriminator.replacingOccurrences(of: "/", with: "_")
+        let dbName = safeDiscriminator.isEmpty
+            ? "bdk-\(secrets.network.rawValue).sqlite"
+            : "bdk-\(secrets.network.rawValue)-\(safeDiscriminator).sqlite"
+        let dbPath = storageDirectory.appendingPathComponent(dbName).path
 
         self.connection = try Connection(path: dbPath)
         do {

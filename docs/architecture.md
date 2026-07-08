@@ -103,7 +103,7 @@ serve a web fallback for non-iOS recipients showing the BIP21 link.
 ## Network selection
 
 `WALLET_NETWORK` build setting → Info.plist `WalletNetwork` → `ChainConfig`.
-Debug = signet (Mutinynet: 30-second blocks, faucet money — ideal for
+Debug = standard signet (faucet money, ~10-minute blocks — good for
 demoing the full send/receive loop). Release = mainnet.
 
 ## Concurrency
