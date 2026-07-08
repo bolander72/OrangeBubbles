@@ -68,7 +68,7 @@ struct WelcomeView: View {
 
             if hasBackup {
                 Button {
-                    Task { await store.restoreWallet() }
+                    Task { await expandThen { await store.restoreWallet() } }
                 } label: {
                     Label("Unlock with Face ID", systemImage: "faceid")
                         .frame(maxWidth: .infinity)
@@ -77,7 +77,7 @@ struct WelcomeView: View {
                 .controlSize(.large)
             } else {
                 Button {
-                    Task { await store.createWallet() }
+                    Task { await expandThen { await store.createWallet() } }
                 } label: {
                     Label("Create Bitcoin Wallet", systemImage: "sparkles")
                         .frame(maxWidth: .infinity)
@@ -93,7 +93,17 @@ struct WelcomeView: View {
             Spacer(minLength: 8)
         }
         .padding(.horizontal, 24)
-        .onTapGesture { bridge.requestExpanded() }
+    }
+
+    /// Face ID cannot survive a compact→expanded transition happening
+    /// underneath it (LAError -4 systemCancel), so expand first, let the
+    /// Messages presentation settle, then start the authenticated flow.
+    private func expandThen(_ action: @escaping () async -> Void) async {
+        if bridge.isCompact {
+            bridge.requestExpanded()
+            try? await Task.sleep(nanoseconds: 600_000_000)
+        }
+        await action()
     }
 }
 
