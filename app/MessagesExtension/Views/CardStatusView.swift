@@ -157,7 +157,7 @@ struct CardStatusView: View {
                 Button {
                     showPay = true
                 } label: {
-                    Label("Pay with Wizard Wallet", systemImage: "bitcoinsign.circle.fill")
+                    Label("Pay with Satchel", systemImage: "bitcoinsign.circle.fill")
                 }
                 .buttonStyle(ProminentButtonStyle())
                 .disabled(store.balance.totalSats == 0)

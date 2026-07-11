@@ -1,4 +1,4 @@
-name: WizardWallet
+name: Satchel
 options:
   bundleIdPrefix: com.taprootwizards
   deploymentTarget:
@@ -24,7 +24,7 @@ packages:
     path: WalletKit
 
 targets:
-  WizardWallet:
+  Satchel:
     type: application
     platform: iOS
     sources:
@@ -40,13 +40,13 @@ targets:
     info:
       path: HostApp/Info.plist
       properties:
-        CFBundleDisplayName: Wizard Wallet
+        CFBundleDisplayName: Satchel
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
     entitlements:
-      path: HostApp/WizardWallet.entitlements
+      path: HostApp/Satchel.entitlements
       properties:
         com.apple.developer.icloud-container-identifiers:
           - iCloud.com.taprootwizards.imessagewallet
@@ -72,12 +72,14 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.taprootwizards.imessagewallet.MessagesExtension
-        PRODUCT_NAME: Wizard Wallet
+        PRODUCT_NAME: Satchel
+        # Distinct module name: the host app target is also named Satchel.
+        PRODUCT_MODULE_NAME: SatchelMessages
         ASSETCATALOG_COMPILER_APPICON_NAME: iMessage App Icon
     info:
       path: MessagesExtension/Info.plist
       properties:
-        CFBundleDisplayName: Wizard Wallet
+        CFBundleDisplayName: Satchel
         WalletNetwork: $(WALLET_NETWORK)
         NSFaceIDUsageDescription: >-
           Face ID protects your Bitcoin wallet: it's required to create,
@@ -115,7 +117,7 @@ targets:
     info:
       path: WalletWidget/Info.plist
       properties:
-        CFBundleDisplayName: Wizard Wallet
+        CFBundleDisplayName: Satchel
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:

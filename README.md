@@ -1,4 +1,4 @@
-# Wizard Wallet — iMessage Bitcoin Wallet
+# Satchel — the iMessage Bitcoin Wallet
 
 A standalone Bitcoin wallet that lives entirely inside Messages. No normal
 mobile app, no account, no backend dependency for custody. Open Messages, tap
@@ -38,13 +38,13 @@ Prereqs: Xcode 16+, [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 
 ```bash
 cd app
-xcodegen generate          # produces WizardWallet.xcodeproj
-open WizardWallet.xcodeproj
+xcodegen generate          # produces Satchel.xcodeproj
+open Satchel.xcodeproj
 ```
 
 Then in Xcode: set your team under Signing & Capabilities, pick a simulator or
-device, and run the **WizardWallet** scheme. In the simulator, open Messages →
-any conversation → app strip → Wizard Wallet.
+device, and run the **Satchel** scheme. In the simulator, open Messages →
+any conversation → app strip → Satchel.
 
 - **Debug builds run on standard signet** (free coins from e.g.
   [signetfaucet.com](https://signetfaucet.com), ~10-minute blocks). Release

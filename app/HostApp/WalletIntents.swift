@@ -6,14 +6,14 @@ import AppIntents
 struct CheckBalanceIntent: AppIntent {
     static let title: LocalizedStringResource = "Check Bitcoin Balance"
     static let description = IntentDescription(
-        "Shows your Wizard Wallet balance.",
+        "Shows your Satchel balance.",
         categoryName: "Wallet"
     )
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let snapshot = SharedSnapshot.load() else {
-            return .result(dialog: "Your wallet hasn't been opened yet — open Wizard Wallet in Messages first.")
+            return .result(dialog: "Your wallet hasn't been opened yet — open Satchel in Messages first.")
         }
         var line = "Your balance is \(snapshot.balanceLine)"
         if let usd = snapshot.usdLine {
@@ -42,7 +42,7 @@ struct ReceiveAddressIntent: AppIntent {
         else {
             return .result(
                 value: "",
-                dialog: "Your wallet hasn't been opened yet — open Wizard Wallet in Messages first."
+                dialog: "Your wallet hasn't been opened yet — open Satchel in Messages first."
             )
         }
         return .result(

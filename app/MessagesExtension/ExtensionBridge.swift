@@ -40,7 +40,7 @@ final class ExtensionBridge: ObservableObject {
         switch kind {
         case .request:
             layout.image = CardImageRenderer.render(kind: .request, request: request)
-            layout.caption = "Tap to pay with Wizard Wallet"
+            layout.caption = "Tap to pay with Satchel"
         case .sent:
             layout.image = CardImageRenderer.render(kind: .receipt, request: request)
             layout.caption = "Tap to view details"
