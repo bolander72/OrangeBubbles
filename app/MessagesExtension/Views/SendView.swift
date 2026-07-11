@@ -23,6 +23,8 @@ struct SendView: View {
     /// Send Max: sweep every UTXO; the fee comes out of the total.
     @State private var sendMax = false
     @State private var showScanner = false
+    @State private var showSmartAmount = false
+    @State private var smartAmountText = ""
 
     enum FeeChoice: String, CaseIterable, Identifiable {
         case slow = "Slow"
@@ -77,6 +79,25 @@ struct SendView: View {
             QRScannerSheet { code in
                 apply(scannedOrPasted: code)
             }
+        }
+        .alert("Describe the amount", isPresented: $showSmartAmount) {
+            TextField("e.g. $5, 0.001 btc, 21k sats", text: $smartAmountText)
+            Button("Use") {
+                let text = smartAmountText
+                smartAmountText = ""
+                Task {
+                    if let sats = await SmartAmountAI.parse(text, store: store) {
+                        amountText = String(sats)
+                        sendMax = false
+                        Haptics.tap()
+                    } else {
+                        store.lastError = "Couldn't understand that amount. Try \"$5\", \"0.001 btc\", or \"21000 sats\"."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) { smartAmountText = "" }
+        } message: {
+            Text("Dollars, BTC, or sats — parsed on your device.")
         }
         .interactiveDismissDisabled(isMidFlight)
     }
@@ -201,11 +222,31 @@ struct SendView: View {
                             .foregroundStyle(.secondary)
                             .padding(.leading, 4)
                     }
+
+                    if addressIsValid, let lookalike = store.poisoningSuspect(for: address) {
+                        InfoBanner(
+                            systemName: "exclamationmark.shield.fill",
+                            text: "This address looks deceptively similar to one you've paid before (\(Format.shortAddress(lookalike))) but is NOT the same. This is a known scam pattern — verify the full address with the recipient before sending.",
+                            tint: .red
+                        )
+                    }
                 }
 
                 // Amount
                 VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel("Amount")
+                    HStack {
+                        fieldLabel("Amount")
+                        Spacer()
+                        Button {
+                            showSmartAmount = true
+                        } label: {
+                            Image(systemName: "character.cursor.ibeam")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Brand.orangeDeep)
+                        }
+                        .accessibilityLabel("Type the amount in dollars, BTC, or words")
+                        .padding(.trailing, 4)
+                    }
                     VStack(spacing: 4) {
                         if sendMax {
                             HStack(alignment: .firstTextBaseline, spacing: 6) {

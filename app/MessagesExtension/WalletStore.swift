@@ -1,6 +1,7 @@
 import AuthenticationServices
 import Foundation
 import WalletKit
+import WidgetKit
 
 /// App-layer state machine. Owns the engine, the decrypted secrets (memory
 /// only, per session), and the backup lifecycle. Every entry into the wallet
@@ -141,6 +142,31 @@ final class WalletStore: ObservableObject {
         transactions = engine.transactions()
         feeTiers = await feeEstimator.tiers(esploraURL: chain.esploraURL, feesURL: chain.feesURL)
         usdPerBTC = await priceOracle.usdPerBTC() ?? usdPerBTC
+        publishSnapshot()
+    }
+
+    /// Watch-only state for the widget and Siri intents (App Group).
+    /// Never includes key material.
+    private func publishSnapshot() {
+        guard let engine else { return }
+        SharedSnapshot(
+            balanceSats: balance.totalSats,
+            pendingSats: balance.pendingSats,
+            recent: transactions.prefix(4).map {
+                SharedSnapshot.Activity(
+                    txid: $0.txid,
+                    incoming: $0.direction == .incoming,
+                    amountSats: $0.amountSats,
+                    confirmed: $0.confirmed,
+                    timestamp: $0.timestamp
+                )
+            },
+            network: chain.network.rawValue,
+            upcomingReceiveAddresses: engine.peekUpcomingReceiveAddresses(count: 3),
+            usdPerBTC: usdPerBTC,
+            updatedAt: Date()
+        ).save()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     /// "≈ $12.34" for display, or nil when the rate is unknown.
@@ -164,6 +190,44 @@ final class WalletStore: ObservableObject {
     func isValidAddress(_ address: String) -> Bool {
         guard let engine else { return false }
         return engine.validateAddress(address.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static let paidAddressesKey = "paidAddresses.v1"
+
+    /// Addresses this wallet has paid before — the reference set for
+    /// address-poisoning detection. Local to this device; capped.
+    private var paidAddresses: [String] {
+        get { UserDefaults.standard.stringArray(forKey: Self.paidAddressesKey) ?? [] }
+        set { UserDefaults.standard.set(Array(newValue.suffix(200)), forKey: Self.paidAddressesKey) }
+    }
+
+    /// Non-nil when `candidate` looks like a poisoning lookalike of an
+    /// address previously paid from this wallet.
+    func poisoningSuspect(for candidate: String) -> String? {
+        AddressSafety.poisoningSuspect(
+            candidate: candidate.trimmingCharacters(in: .whitespacesAndNewlines),
+            history: paidAddresses
+        )
+    }
+
+    private func recordPaidAddress(_ address: String) {
+        // Skip pseudo-destinations like "Speed-up of abc123…".
+        guard !address.contains(where: \.isWhitespace) else { return }
+        var list = paidAddresses
+        guard !list.contains(address) else { return }
+        list.append(address)
+        paidAddresses = list
+    }
+
+    /// Converts a SmartAmount parse into sats using the live display rate.
+    func satsFor(_ parsed: SmartAmount.Parsed) -> UInt64? {
+        switch parsed {
+        case .sats(let sats):
+            return sats
+        case .usd(let dollars):
+            guard let usdPerBTC, usdPerBTC > 0 else { return nil }
+            return UInt64((dollars / usdPerBTC * 100_000_000).rounded())
+        }
     }
 
     /// Face ID first, then build + sign. Returns the signed-but-unbroadcast
@@ -234,6 +298,7 @@ final class WalletStore: ObservableObject {
         let txid = try await withEsploraFailover { esplora in
             try await Self.offMain { try engine.broadcast(send, esploraURL: esplora) }
         }
+        recordPaidAddress(send.details.destinationAddress)
         await refresh()
         return txid
     }

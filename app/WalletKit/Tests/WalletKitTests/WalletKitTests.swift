@@ -111,6 +111,49 @@ final class PaymentRequestTests: XCTestCase {
     }
 }
 
+final class AddressSafetyTests: XCTestCase {
+    func testDetectsLookalike() {
+        let paid = "tb1qedc4ejt884yjht23eqnr82s4e7yhrztac4j0vt"
+        let poisoned = "tb1qedc4xxxxxxxxxxxxxxxxxxxxxxxxxxac4j0vt"
+        XCTAssertEqual(AddressSafety.poisoningSuspect(candidate: poisoned, history: [paid]), paid)
+    }
+
+    func testIgnoresExactRepeatAndUnrelated() {
+        let paid = "tb1qedc4ejt884yjht23eqnr82s4e7yhrztac4j0vt"
+        XCTAssertNil(AddressSafety.poisoningSuspect(candidate: paid, history: [paid]))
+        XCTAssertNil(AddressSafety.poisoningSuspect(
+            candidate: "tb1q9ykhcups7uw84jkvztgemta5lcehuzdjw48dpq",
+            history: [paid]
+        ))
+    }
+}
+
+final class SmartAmountTests: XCTestCase {
+    func testSatsForms() {
+        XCTAssertEqual(SmartAmount.parse("21000"), .sats(21_000))
+        XCTAssertEqual(SmartAmount.parse("21,000 sats"), .sats(21_000))
+        XCTAssertEqual(SmartAmount.parse("21k sats"), .sats(21_000))
+        XCTAssertEqual(SmartAmount.parse("1.5m"), .sats(1_500_000))
+    }
+
+    func testBtcForms() {
+        XCTAssertEqual(SmartAmount.parse("0.5 btc"), .sats(50_000_000))
+        XCTAssertEqual(SmartAmount.parse("₿0.001"), .sats(100_000))
+    }
+
+    func testUsdForms() {
+        XCTAssertEqual(SmartAmount.parse("$5"), .usd(5))
+        XCTAssertEqual(SmartAmount.parse("5 bucks"), .usd(5))
+        XCTAssertEqual(SmartAmount.parse("12.50 usd"), .usd(12.5))
+    }
+
+    func testGarbage() {
+        XCTAssertNil(SmartAmount.parse(""))
+        XCTAssertNil(SmartAmount.parse("banana"))
+        XCTAssertNil(SmartAmount.parse("$-5"))
+    }
+}
+
 final class BackupVersioningTests: XCTestCase {
     private func makeSecrets(hint: UInt32) -> WalletSecrets {
         WalletSecrets(

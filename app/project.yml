@@ -29,8 +29,10 @@ targets:
     platform: iOS
     sources:
       - HostApp
+      - Shared
     dependencies:
       - target: MessagesExtension
+      - target: WalletWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.taprootwizards.imessagewallet
@@ -54,6 +56,8 @@ targets:
           - CloudDocuments
         com.apple.developer.associated-domains:
           - webcredentials:wallet.taprootwizards.com
+        com.apple.security.application-groups:
+          - group.com.taprootwizards.imessagewallet
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.taprootwizards.imessagewallet.shared
 
@@ -62,6 +66,7 @@ targets:
     platform: iOS
     sources:
       - MessagesExtension
+      - Shared
     dependencies:
       - package: WalletKit
     settings:
@@ -93,5 +98,28 @@ targets:
           - CloudDocuments
         com.apple.developer.associated-domains:
           - webcredentials:wallet.taprootwizards.com
+        com.apple.security.application-groups:
+          - group.com.taprootwizards.imessagewallet
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.taprootwizards.imessagewallet.shared
+
+  WalletWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - WalletWidget
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taprootwizards.imessagewallet.WalletWidget
+    info:
+      path: WalletWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Wizard Wallet
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: WalletWidget/WalletWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.taprootwizards.imessagewallet
