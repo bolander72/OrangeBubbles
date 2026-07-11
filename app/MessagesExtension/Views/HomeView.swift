@@ -20,15 +20,16 @@ struct HomeView: View {
                         Button {
                             showSettings = true
                         } label: {
-                            Image(systemName: "gearshape.fill")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 34, height: 34)
-                                .background(Circle().fill(Color(.secondarySystemBackground)))
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(Color(.secondaryLabel))
+                                .frame(width: 36, height: 36)
+                                .contentShape(Circle())
                         }
+                        .buttonStyle(.plain)
                         .accessibilityLabel("Wallet settings")
-                        .padding(.top, 14)
-                        .padding(.trailing, 16)
+                        .padding(.top, 10)
+                        .padding(.trailing, 12)
                     }
                 }
 

@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     @State private var seedWords: [String]?
     @State private var migrating = false
+    @State private var showSecurityExplainer = false
 
     var body: some View {
         NavigationStack {
@@ -26,6 +27,9 @@ struct SettingsView: View {
         }
         .sheet(item: seedSheet) { words in
             SeedRevealView(words: words.items)
+        }
+        .sheet(isPresented: $showSecurityExplainer) {
+            SecurityExplainerView(store: store)
         }
     }
 
@@ -69,7 +73,21 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            LabeledContent("Protected by", value: store.backupKeyProviderName)
+            Button {
+                showSecurityExplainer = true
+            } label: {
+                HStack {
+                    Text("Backup encryption")
+                        .foregroundStyle(Color(.label))
+                    Spacer()
+                    Text(store.backupKeyProviderName)
+                        .foregroundStyle(Color(.secondaryLabel))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color(.tertiaryLabel))
+                }
+            }
+            .accessibilityLabel("Backup encryption: \(store.backupKeyProviderName). Tap to learn how your wallet is protected.")
         }
     }
 
@@ -109,6 +127,87 @@ struct SettingsView: View {
 private struct SeedWords: Identifiable {
     let items: [String]
     var id: String { items.joined() }
+}
+
+/// Plain-English walkthrough of the security model — where the keys live,
+/// what the backup is, and what Taproot Wizards can and can't see.
+struct SecurityExplainerView: View {
+    @ObservedObject var store: WalletStore
+    @Environment(\.dismiss) private var dismiss
+
+    private var usesPasskey: Bool {
+        store.backupKeyProviderName.localizedCaseInsensitiveContains("passkey")
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 14) {
+                    explainerCard(
+                        icon: "iphone",
+                        title: "Your keys live on this iPhone",
+                        body: "The wallet is a 12-word secret generated on your device. It is never shown, uploaded, or shared — it only exists in this device's memory while the wallet is unlocked."
+                    )
+
+                    explainerCard(
+                        icon: "lock.icloud.fill",
+                        title: "Your backup lives in your iCloud",
+                        body: usesPasskey
+                            ? "An encrypted copy of the secret is stored in your personal iCloud Drive. The key that unlocks it comes from a passkey that requires your Face ID — nobody, including Apple or Taproot Wizards, can decrypt the backup without you."
+                            : "An encrypted copy of the secret is stored in your personal iCloud Drive. The key that unlocks it lives in your iCloud Keychain, which Apple end-to-end encrypts to your devices. Neither Apple nor Taproot Wizards can read your backup."
+                    )
+
+                    explainerCard(
+                        icon: "faceid",
+                        title: "Face ID guards every action",
+                        body: "Creating, unlocking, sending, and revealing the recovery phrase all require Face ID (or your device passcode)."
+                    )
+
+                    explainerCard(
+                        icon: "arrow.triangle.2.circlepath.icloud",
+                        title: "Losing your phone isn't losing your bitcoin",
+                        body: "Sign into iCloud on a new iPhone, open Wizard Wallet, and unlock — the backup and its key sync down and the same wallet is rebuilt. The recovery phrase in Settings is a manual backstop on top of that."
+                    )
+
+                    explainerCard(
+                        icon: "eye.slash.fill",
+                        title: "No accounts. No servers. No tracking.",
+                        body: "Taproot Wizards runs no server for this wallet and never sees your keys, balances, or activity. The app reads the Bitcoin network directly from public sources — like any other bitcoin node or explorer."
+                    )
+                }
+                .padding(20)
+            }
+            .navigationTitle("How you're protected")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                        .font(.system(.body, design: .rounded).weight(.medium))
+                }
+            }
+        }
+    }
+
+    private func explainerCard(icon: String, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            IconBubble(systemName: icon, tint: Brand.orange, size: 40)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                Text(body)
+                    .font(.footnote)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
 }
 
 /// Full-screen, deliberately screenshot-unfriendly presentation of the
