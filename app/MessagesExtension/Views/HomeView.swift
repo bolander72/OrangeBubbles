@@ -40,19 +40,16 @@ struct HomeView: View {
         .sheet(isPresented: $showSend) {
             SendView(store: store, bridge: bridge, prefill: nil)
         }
-        .sheet(item: incomingSendRequest) { card in
-            SendView(store: store, bridge: bridge, prefill: card.request)
+        .sheet(item: incomingCard) { card in
+            CardStatusView(store: store, bridge: bridge, card: card)
         }
         .task { await store.refresh() }
     }
 
-    /// Tapped payment-request cards open Send prefilled; receipts are ignored here.
-    private var incomingSendRequest: Binding<IncomingCard?> {
+    /// Any tapped card (request or receipt) opens the live status view.
+    private var incomingCard: Binding<IncomingCard?> {
         Binding(
-            get: {
-                guard let card = store.incomingRequest, !card.isReceipt else { return nil }
-                return card
-            },
+            get: { store.incomingRequest },
             set: { if $0 == nil { store.incomingRequest = nil } }
         )
     }

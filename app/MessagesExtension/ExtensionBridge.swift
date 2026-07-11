@@ -20,9 +20,14 @@ final class ExtensionBridge: ObservableObject {
 
     // MARK: - Cards
 
+    /// Session of the card the user most recently tapped in the transcript.
+    /// Reusing it when inserting an update makes Messages replace that
+    /// bubble in place instead of appending a new one.
+    private var selectedSession: MSSession?
+
     /// Inserts a payment-request (or payment-status) card into the compose field.
     /// The user still taps the iMessage send button — we never auto-send.
-    func insertCard(for request: PaymentRequest, kind: CardKind) {
+    func insertCard(for request: PaymentRequest, kind: CardKind, updateSelectedCard: Bool = false) {
         guard let conversation else { return }
 
         var components = URLComponents()
@@ -41,7 +46,8 @@ final class ExtensionBridge: ObservableObject {
             layout.caption = "Tap to view details"
         }
 
-        let message = MSMessage(session: MSSession())
+        let session = (updateSelectedCard ? selectedSession : nil) ?? MSSession()
+        let message = MSMessage(session: session)
         message.url = components.url
         message.layout = layout
         message.summaryText = kind == .request ? "₿ Bitcoin payment request" : "₿ Payment sent"
@@ -51,8 +57,9 @@ final class ExtensionBridge: ObservableObject {
         }
     }
 
-    /// A tapped card routes into the send flow (for /pay requests) or is
-    /// surfaced as status (for /paid receipts).
+    /// A tapped card opens the live status view (which offers Pay for
+    /// unpaid requests). The card's session is kept so a status update can
+    /// replace the bubble in place.
     func handleSelected(_ message: MSMessage, store: WalletStore) {
         guard
             let url = message.url,
@@ -61,6 +68,7 @@ final class ExtensionBridge: ObservableObject {
             let request = PaymentRequest(queryItems: items)
         else { return }
 
+        selectedSession = message.session
         store.incomingRequest = IncomingCard(
             request: request,
             isReceipt: components.path == "/paid"
