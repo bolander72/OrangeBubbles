@@ -73,21 +73,15 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            LabeledContent("Backup encryption", value: store.backupKeyProviderName)
+
             Button {
                 showSecurityExplainer = true
             } label: {
-                HStack {
-                    Text("Backup encryption")
-                        .foregroundStyle(Color(.label))
-                    Spacer()
-                    Text(store.backupKeyProviderName)
-                        .foregroundStyle(Color(.secondaryLabel))
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color(.tertiaryLabel))
-                }
+                Label("Learn how you're protected", systemImage: "info.circle")
+                    .font(.system(.body, design: .rounded).weight(.medium))
             }
-            .accessibilityLabel("Backup encryption: \(store.backupKeyProviderName). Tap to learn how your wallet is protected.")
+            .accessibilityHint("Explains where your keys live and how backups are encrypted")
         }
     }
 
