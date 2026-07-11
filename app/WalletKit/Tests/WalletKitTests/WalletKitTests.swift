@@ -103,6 +103,80 @@ final class BackupStoreTests: XCTestCase {
     }
 }
 
+final class StatusProbeTests: XCTestCase {
+    func testAddressActivityParsing() async throws {
+        let json = """
+        {"address":"tb1q","chain_stats":{"funded_txo_sum":21000,"spent_txo_sum":0,"funded_txo_count":2,"spent_txo_count":0,"tx_count":2},
+         "mempool_stats":{"funded_txo_sum":500,"spent_txo_sum":0,"funded_txo_count":1,"spent_txo_count":0,"tx_count":1}}
+        """
+        let probe = StatusProbe(session: MockURLProtocol.session(returning: json))
+        let activity = try await probe.addressActivity(
+            address: "tb1q",
+            esploraURL: URL(string: "https://esplora.test/api")!
+        )
+        XCTAssertEqual(activity.confirmedReceivedSats, 21000)
+        XCTAssertEqual(activity.mempoolReceivedSats, 500)
+        XCTAssertTrue(activity.hasAny)
+    }
+
+    func testTxConfirmationParsing() async throws {
+        let json = #"{"confirmed":true,"block_height":900,"block_hash":"x","block_time":1751000000}"#
+        let probe = StatusProbe(session: MockURLProtocol.session(returning: json))
+        let tx = try await probe.txConfirmation(
+            txid: String(repeating: "ab", count: 32),
+            esploraURL: URL(string: "https://esplora.test/api")!
+        )
+        XCTAssertTrue(tx.confirmed)
+        XCTAssertEqual(tx.blockTime, Date(timeIntervalSince1970: 1_751_000_000))
+    }
+}
+
+final class PriceOracleTests: XCTestCase {
+    func testUSDParsingAndFormatting() async {
+        let json = #"{"time":1751000000,"USD":100000,"EUR":92000}"#
+        let oracle = PriceOracle(session: MockURLProtocol.session(returning: json))
+        let price = await oracle.usdPerBTC()
+        XCTAssertEqual(price, 100000)
+
+        XCTAssertEqual(PriceOracle.usdString(sats: 100_000_000, usdPerBTC: 100_000), "$100,000.00")
+        XCTAssertEqual(PriceOracle.usdString(sats: 1_000, usdPerBTC: 100_000), "$1.00")
+    }
+
+    func testReturnsNilOnFailure() async {
+        let oracle = PriceOracle(session: MockURLProtocol.session(returning: "oops", status: 500))
+        let price = await oracle.usdPerBTC()
+        XCTAssertNil(price)
+    }
+}
+
+/// Serves a canned response to any request on a private session.
+final class MockURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var body = ""
+    nonisolated(unsafe) static var status = 200
+
+    static func session(returning body: String, status: Int = 200) -> URLSession {
+        Self.body = body
+        Self.status = status
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: nil
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(Self.body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 final class WalletEngineTests: XCTestCase {
     private func tempDir() -> URL {
         FileManager.default.temporaryDirectory

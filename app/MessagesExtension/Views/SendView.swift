@@ -20,6 +20,8 @@ struct SendView: View {
     @State private var amountText = ""
     @State private var feeChoice: FeeChoice = .normal
     @State private var working = false
+    /// Send Max: sweep every UTXO; the fee comes out of the total.
+    @State private var sendMax = false
 
     enum FeeChoice: String, CaseIterable, Identifiable {
         case slow = "Slow"
@@ -167,31 +169,75 @@ struct SendView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     fieldLabel("Amount")
                     VStack(spacing: 4) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            TextField("0", text: $amountText)
-                                .keyboardType(.numberPad)
-                                .font(.system(size: 30, weight: .bold, design: .rounded))
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: true, vertical: false)
-                            Text("sats")
-                                .font(.system(.callout, design: .rounded).weight(.semibold))
+                        if sendMax {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text("Everything")
+                                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                                    .foregroundStyle(Brand.gradient)
+                                Text("−fee")
+                                    .font(.system(.callout, design: .rounded).weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            Text("\(Format.sats(store.balance.confirmedSats)) sats minus the network fee")
+                                .font(.system(.caption, design: .rounded))
                                 .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
+                        } else {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                TextField("0", text: $amountText)
+                                    .keyboardType(.numberPad)
+                                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .accessibilityLabel("Amount in sats")
+                                Text("sats")
+                                    .font(.system(.callout, design: .rounded).weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
 
-                        if let sats = parsedAmount {
-                            Text("\(Format.btc(sats)) BTC")
-                                .font(.system(.caption, design: .monospaced))
+                            if let sats = parsedAmount {
+                                HStack(spacing: 8) {
+                                    Text("\(Format.btc(sats)) BTC")
+                                        .font(.system(.caption, design: .monospaced))
+                                    if let usd = store.usdApprox(sats) {
+                                        Text(usd)
+                                            .font(.system(.caption, design: .rounded).weight(.medium))
+                                    }
+                                }
                                 .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .padding(.vertical, 14)
                     .background(fieldBackground)
 
-                    Text("Available: \(Format.sats(store.balance.confirmedSats)) sats")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 4)
+                    HStack {
+                        Text("Available: \(Format.sats(store.balance.confirmedSats)) sats")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            withAnimation(.spring(response: 0.25)) { sendMax.toggle() }
+                            Haptics.tap()
+                        } label: {
+                            Text(sendMax ? "Enter amount" : "Max")
+                                .font(.system(.caption, design: .rounded).weight(.bold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(Capsule().fill(sendMax ? Brand.orange.opacity(0.25) : Brand.orange.opacity(0.13)))
+                                .foregroundStyle(Brand.orangeDeep)
+                        }
+                        .accessibilityLabel(sendMax ? "Switch to entering an amount" : "Send entire balance")
+                    }
+                    .padding(.horizontal, 4)
+
+                    if dustWarning {
+                        Text("Minimum send is \(Format.sats(dustLimitSats)) sats.")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .padding(.leading, 4)
+                    }
                 }
 
                 // Fee
@@ -272,33 +318,43 @@ struct SendView: View {
             .foregroundStyle(selected ? Brand.orangeDeep : .secondary)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(choice.rawValue) fee, \(choice.eta), \(choice.satPerVb(store.feeTiers)) sats per virtual byte")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var parsedAmount: UInt64? {
         UInt64(amountText.filter(\.isNumber)).flatMap { $0 > 0 ? $0 : nil }
     }
 
+    private var dustWarning: Bool {
+        guard !sendMax, let sats = parsedAmount else { return false }
+        return sats < dustLimitSats
+    }
+
     private var canReview: Bool {
-        parsedAmount != nil && addressIsValid
+        addressIsValid && (sendMax || (parsedAmount.map { $0 >= dustLimitSats } ?? false))
     }
 
     private var isLargeSend: Bool {
+        if sendMax { return true }
         guard let sats = parsedAmount, store.balance.confirmedSats > 0 else { return false }
         return Double(sats) / Double(store.balance.confirmedSats) > 0.75
     }
 
     private func prepare() async {
-        guard let sats = parsedAmount else { return }
+        guard sendMax || parsedAmount != nil else { return }
         working = true
         defer { working = false }
         do {
             let send = try await store.prepareSend(
                 to: address.trimmingCharacters(in: .whitespacesAndNewlines),
-                amountSats: sats,
-                feeRateSatPerVb: feeChoice.satPerVb(store.feeTiers)
+                amountSats: parsedAmount ?? 0,
+                feeRateSatPerVb: feeChoice.satPerVb(store.feeTiers),
+                drain: sendMax
             )
             withAnimation { stage = .review(send) }
         } catch {
+            Haptics.warning()
             store.lastError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
         }
     }
@@ -364,8 +420,10 @@ struct SendView: View {
         withAnimation { stage = .broadcasting }
         do {
             let txid = try await store.broadcast(send)
+            Haptics.success()
             withAnimation(.spring(response: 0.4)) { stage = .sent(txid: txid, details: send.details) }
         } catch {
+            Haptics.warning()
             store.lastError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
             withAnimation { stage = .review(send) }
         }

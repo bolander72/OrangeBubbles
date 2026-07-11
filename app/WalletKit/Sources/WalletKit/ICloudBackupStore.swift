@@ -1,8 +1,12 @@
 import Foundation
 
-/// Persists the encrypted `BackupEnvelope` as a single JSON document in the
-/// app's iCloud Drive ubiquity container. Files in the container are also
-/// cached locally, so unlock works offline once the backup has synced down.
+/// Persists the encrypted `BackupEnvelope` as a single JSON document.
+///
+/// Preferred home: the app's iCloud Drive ubiquity container (survives
+/// uninstall, syncs to the user's other devices). When iCloud is
+/// unavailable (simulator without sign-in, iCloud Drive off) it falls back
+/// to app-local storage so create/restore keep working — and migrates the
+/// file into iCloud automatically the next time it becomes reachable.
 public struct ICloudBackupStore: Sendable {
     public static let fileName = "wallet-backup.v1.json"
 
@@ -15,50 +19,86 @@ public struct ICloudBackupStore: Sendable {
         self.containerIdentifier = containerIdentifier
     }
 
-    /// True when the ubiquity container is reachable (device signed into
-    /// iCloud with iCloud Drive on). When false, the store transparently
-    /// falls back to app-local storage so create/restore still work — the
-    /// UI must surface that the wallet is *not* protected against device
-    /// loss until iCloud comes back.
+    // MARK: - Locations
+
     public var isUsingICloud: Bool {
         fileManager.url(forUbiquityContainerIdentifier: containerIdentifier) != nil
     }
 
-    private func backupURL() throws -> URL {
-        let directory: URL
-        if let container = fileManager.url(forUbiquityContainerIdentifier: containerIdentifier) {
-            directory = container.appendingPathComponent("Documents", isDirectory: true)
-        } else {
-            // No iCloud (simulator without sign-in, iCloud Drive disabled).
-            directory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("WalletBackupLocal", isDirectory: true)
+    private func icloudURL() -> URL? {
+        guard let container = fileManager.url(forUbiquityContainerIdentifier: containerIdentifier) else {
+            return nil
         }
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let documents = container.appendingPathComponent("Documents", isDirectory: true)
+        try? fileManager.createDirectory(at: documents, withIntermediateDirectories: true)
+        return documents.appendingPathComponent(Self.fileName)
+    }
+
+    private func fallbackURL() -> URL {
+        let directory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("WalletBackupLocal", isDirectory: true)
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent(Self.fileName)
     }
 
+    // MARK: - API
+
     public func backupExists() -> Bool {
-        guard let url = try? backupURL() else { return false }
-        if fileManager.fileExists(atPath: url.path) { return true }
-        // The item may exist in iCloud but not be materialized locally yet.
-        return (try? url.checkResourceIsReachable()) ?? false
-            || fileManager.isUbiquitousItem(at: url)
+        if let icloud = icloudURL(),
+           fileManager.fileExists(atPath: icloud.path) || fileManager.isUbiquitousItem(at: icloud) {
+            return true
+        }
+        return fileManager.fileExists(atPath: fallbackURL().path)
     }
 
     public func load() async throws -> BackupEnvelope {
-        let url = try backupURL()
-
-        if !fileManager.fileExists(atPath: url.path), fileManager.isUbiquitousItem(at: url) {
-            // Ask iCloud to materialize the file, then poll briefly.
-            try? fileManager.startDownloadingUbiquitousItem(at: url)
-            for _ in 0..<40 where !fileManager.fileExists(atPath: url.path) {
-                try await Task.sleep(nanoseconds: 250_000_000)
+        if let icloud = icloudURL() {
+            if !fileManager.fileExists(atPath: icloud.path), fileManager.isUbiquitousItem(at: icloud) {
+                // Ask iCloud to materialize the file, then poll briefly.
+                try? fileManager.startDownloadingUbiquitousItem(at: icloud)
+                for _ in 0..<40 where !fileManager.fileExists(atPath: icloud.path) {
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                }
+            }
+            if fileManager.fileExists(atPath: icloud.path) {
+                return try decode(at: icloud)
             }
         }
-        guard fileManager.fileExists(atPath: url.path) else {
+        let fallback = fallbackURL()
+        guard fileManager.fileExists(atPath: fallback.path) else {
             throw WalletKitError.backupNotFound
         }
+        return try decode(at: fallback)
+    }
 
+    /// Writes to iCloud when reachable, else the local fallback. A
+    /// successful iCloud write also cleans up any stale fallback copy —
+    /// which is exactly how a local-only backup migrates once the user
+    /// signs into iCloud.
+    public func save(_ envelope: BackupEnvelope) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(envelope)
+
+        if let icloud = icloudURL() {
+            try coordinatedWrite(data, to: icloud)
+            try? fileManager.removeItem(at: fallbackURL())
+        } else {
+            try data.write(to: fallbackURL(), options: .atomic)
+        }
+    }
+
+    /// True when a backup exists but only on this device.
+    public func hasLocalOnlyBackup() -> Bool {
+        guard fileManager.fileExists(atPath: fallbackURL().path) else { return false }
+        guard let icloud = icloudURL() else { return true }
+        return !fileManager.fileExists(atPath: icloud.path) && !fileManager.isUbiquitousItem(at: icloud)
+    }
+
+    // MARK: - Internals
+
+    private func decode(at url: URL) throws -> BackupEnvelope {
         let data = try Data(contentsOf: url)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -69,13 +109,7 @@ public struct ICloudBackupStore: Sendable {
         }
     }
 
-    public func save(_ envelope: BackupEnvelope) throws {
-        let url = try backupURL()
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(envelope)
-
+    private func coordinatedWrite(_ data: Data, to url: URL) throws {
         var coordinatorError: NSError?
         var writeError: Error?
         let coordinator = NSFileCoordinator()

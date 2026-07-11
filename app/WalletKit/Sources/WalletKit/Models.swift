@@ -131,9 +131,15 @@ public struct PreparedSend: Sendable {
     public var totalSats: UInt64 { amountSats + feeSats }
 }
 
+/// Outputs below this are non-standard and unrelayable ("dust").
+public let dustLimitSats: UInt64 = 546
+
 public enum WalletKitError: LocalizedError {
     case invalidAddress(String)
     case insufficientFunds
+    case amountBelowDust
+    case networkUnreachable
+    case feeBumpNotPossible(String)
     case backupNotFound
     case backupCorrupted(String)
     case keyUnavailable(String)
@@ -144,6 +150,9 @@ public enum WalletKitError: LocalizedError {
         switch self {
         case .invalidAddress(let a): return "Invalid Bitcoin address: \(a)"
         case .insufficientFunds: return "Not enough funds to cover the amount plus network fees."
+        case .amountBelowDust: return "Amount is too small to send on the Bitcoin network — the minimum is \(dustLimitSats) sats."
+        case .networkUnreachable: return "Couldn't reach the Bitcoin network. Check your connection and try again."
+        case .feeBumpNotPossible(let why): return "Can't speed this payment up: \(why)"
         case .backupNotFound: return "No wallet backup found in iCloud."
         case .backupCorrupted(let why): return "Wallet backup could not be read: \(why)"
         case .keyUnavailable(let why): return "Encryption key unavailable: \(why)"

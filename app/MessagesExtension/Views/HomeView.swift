@@ -7,12 +7,30 @@ struct HomeView: View {
 
     @State private var showReceive = false
     @State private var showSend = false
+    @State private var showSettings = false
+    @State private var speedingUp = false
 
     var body: some View {
         VStack(spacing: 0) {
             balanceHeader
                 .padding(.top, bridge.isCompact ? 10 : 20)
                 .padding(.horizontal, 20)
+                .overlay(alignment: .topTrailing) {
+                    if !bridge.isCompact {
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Image(systemName: "gearshape.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 34, height: 34)
+                                .background(Circle().fill(Color(.secondarySystemBackground)))
+                        }
+                        .accessibilityLabel("Wallet settings")
+                        .padding(.top, 14)
+                        .padding(.trailing, 16)
+                    }
+                }
 
             actionRow
                 .padding(.horizontal, 20)
@@ -42,6 +60,9 @@ struct HomeView: View {
         }
         .sheet(item: incomingCard) { card in
             CardStatusView(store: store, bridge: bridge, card: card)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(store: store)
         }
         .task { await store.refresh() }
     }
@@ -81,6 +102,12 @@ struct HomeView: View {
                 Text("\(Format.btc(store.balance.totalSats)) BTC")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
+
+                if let usd = store.usdApprox(store.balance.totalSats) {
+                    Text(usd)
+                        .font(.system(.caption, design: .rounded).weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
 
                 if store.balance.pendingSats > 0 {
                     HStack(spacing: 3) {
@@ -144,7 +171,13 @@ struct HomeView: View {
                         .padding(.bottom, 6)
 
                         ForEach(store.transactions) { tx in
-                            TransactionRow(tx: tx, explorerURL: store.chain.explorerURL(txid: tx.txid))
+                            TransactionRow(
+                                tx: tx,
+                                explorerURL: store.chain.explorerURL(txid: tx.txid),
+                                onSpeedUp: (tx.direction == .outgoing && !tx.confirmed && !speedingUp)
+                                    ? { speedUp(tx.txid) }
+                                    : nil
+                            )
                             if tx.id != store.transactions.last?.id {
                                 Divider().padding(.leading, 68)
                             }
@@ -152,6 +185,20 @@ struct HomeView: View {
                     }
                 }
                 .refreshable { await store.refresh() }
+            }
+        }
+    }
+
+    private func speedUp(_ txid: String) {
+        speedingUp = true
+        Task {
+            defer { speedingUp = false }
+            do {
+                _ = try await store.speedUp(txid: txid)
+                Haptics.success()
+            } catch {
+                Haptics.warning()
+                store.lastError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
             }
         }
     }
@@ -175,6 +222,7 @@ struct TransactionRow: View {
     @Environment(\.openURL) private var openURL
     let tx: WalletTransaction
     let explorerURL: URL
+    var onSpeedUp: (() -> Void)?
 
     var body: some View {
         Button {
@@ -206,13 +254,32 @@ struct TransactionRow: View {
 
                 Spacer()
 
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: .trailing, spacing: 3) {
                     Text((tx.direction == .incoming ? "+" : "−") + Format.sats(tx.amountSats))
                         .font(.system(.subheadline, design: .rounded).weight(.bold))
                         .foregroundStyle(tx.direction == .incoming ? .green : .primary)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.quaternary)
+
+                    if let onSpeedUp {
+                        Button {
+                            onSpeedUp()
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "hare.fill").font(.system(size: 8))
+                                Text("Speed Up")
+                            }
+                            .font(.system(.caption2, design: .rounded).weight(.bold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Brand.orange.opacity(0.13)))
+                            .foregroundStyle(Brand.orangeDeep)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Speed up this payment with a higher fee")
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.quaternary)
+                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -220,5 +287,9 @@ struct TransactionRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(tx.direction == .incoming ? "Received" : "Sent") \(Format.sats(tx.amountSats)) sats, \(tx.confirmed ? "confirmed" : "pending")"
+        )
     }
 }

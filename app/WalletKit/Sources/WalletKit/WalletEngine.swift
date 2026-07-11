@@ -155,14 +155,19 @@ public final class WalletEngine: @unchecked Sendable {
     /// after a restore to discover used addresses beyond the hints.
     public func sync(esploraURL: URL, fullScan: Bool = false) throws {
         let client = EsploraClient(url: esploraURL.absoluteString)
-        if fullScan {
-            let request = try wallet.startFullScan().build()
-            let update = try client.fullScan(request: request, stopGap: 25, parallelRequests: 4)
-            try wallet.applyUpdate(update: update)
-        } else {
-            let request = try wallet.startSyncWithRevealedSpks().build()
-            let update = try client.sync(request: request, parallelRequests: 4)
-            try wallet.applyUpdate(update: update)
+        do {
+            if fullScan {
+                let request = try wallet.startFullScan().build()
+                let update = try client.fullScan(request: request, stopGap: 25, parallelRequests: 4)
+                try wallet.applyUpdate(update: update)
+            } else {
+                let request = try wallet.startSyncWithRevealedSpks().build()
+                let update = try client.sync(request: request, parallelRequests: 4)
+                try wallet.applyUpdate(update: update)
+            }
+        } catch let error as EsploraError {
+            NSLog("esplora sync failed: \(error)")
+            throw WalletKitError.networkUnreachable
         }
         try persist()
     }
@@ -211,9 +216,86 @@ public final class WalletEngine: @unchecked Sendable {
         )
     }
 
+    /// Sweeps every spendable UTXO to `destination` (the "Send Max" path —
+    /// no change output; the fee comes out of the swept total).
+    public func createSignedDrain(
+        to destination: String,
+        feeRateSatPerVb: UInt64
+    ) throws -> SignedSend {
+        guard let address = try? Address(address: destination, network: network.bdkNetwork) else {
+            throw WalletKitError.invalidAddress(destination)
+        }
+
+        let psbt: Psbt
+        do {
+            psbt = try TxBuilder()
+                .drainWallet()
+                .drainTo(script: address.scriptPubkey())
+                .feeRate(feeRate: try FeeRate.fromSatPerVb(satVb: feeRateSatPerVb))
+                .finish(wallet: wallet)
+        } catch {
+            if String(describing: error).lowercased().contains("insufficient") {
+                throw WalletKitError.insufficientFunds
+            }
+            throw WalletKitError.internalError("could not build sweep: \(error)")
+        }
+
+        let signed = try wallet.sign(psbt: psbt)
+        guard signed else {
+            throw WalletKitError.internalError("wallet could not finalize signatures")
+        }
+        let tx = try psbt.extractTx()
+        let fee = try wallet.calculateFee(tx: tx).toSat()
+        // A drain has a single recipient and no change: the sent amount is
+        // simply the sum of the outputs.
+        let amount = tx.output().reduce(UInt64(0)) { $0 + $1.value }
+        try persist()
+
+        return SignedSend(
+            transaction: tx,
+            details: PreparedSend(destinationAddress: destination, amountSats: amount, feeSats: fee)
+        )
+    }
+
+    /// RBF fee bump for one of our unconfirmed sends.
+    public func createFeeBump(txid: String, feeRateSatPerVb: UInt64) throws -> SignedSend {
+        let psbt: Psbt
+        do {
+            psbt = try BumpFeeTxBuilder(
+                txid: txid,
+                feeRate: try FeeRate.fromSatPerVb(satVb: feeRateSatPerVb)
+            )
+            .finish(wallet: wallet)
+        } catch {
+            throw WalletKitError.feeBumpNotPossible(String(describing: error))
+        }
+
+        let signed = try wallet.sign(psbt: psbt)
+        guard signed else {
+            throw WalletKitError.internalError("wallet could not finalize signatures")
+        }
+        let tx = try psbt.extractTx()
+        let fee = try wallet.calculateFee(tx: tx).toSat()
+        let values = wallet.sentAndReceived(tx: tx)
+        let sent = values.sent.toSat()
+        let received = values.received.toSat()
+        let amount = sent > received ? sent - received - min(fee, sent - received) : 0
+        try persist()
+
+        return SignedSend(
+            transaction: tx,
+            details: PreparedSend(destinationAddress: "Speed-up of \(txid.prefix(8))…", amountSats: amount, feeSats: fee)
+        )
+    }
+
     public func broadcast(_ send: SignedSend, esploraURL: URL) throws -> String {
         let client = EsploraClient(url: esploraURL.absoluteString)
-        try client.broadcast(transaction: send.transaction)
+        do {
+            try client.broadcast(transaction: send.transaction)
+        } catch let error as EsploraError {
+            NSLog("broadcast failed: \(error)")
+            throw WalletKitError.networkUnreachable
+        }
         return send.transaction.computeTxid().description
     }
 

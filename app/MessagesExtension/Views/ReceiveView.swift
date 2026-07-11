@@ -73,6 +73,7 @@ struct ReceiveView: View {
     private func addressChip(for request: PaymentRequest) -> some View {
         Button {
             UIPasteboard.general.string = request.address
+            Haptics.tap()
             withAnimation(.spring(response: 0.3)) { copied = true }
             Task {
                 try? await Task.sleep(nanoseconds: 1_800_000_000)
@@ -83,6 +84,7 @@ struct ReceiveView: View {
                 Text(Format.shortAddress(request.address, prefix: 14, suffix: 10))
                     .font(.system(.footnote, design: .monospaced).weight(.medium))
                     .foregroundStyle(.primary)
+                    .accessibilityLabel("Bitcoin address, tap to copy")
                 Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(copied ? .green : Brand.orangeDeep)
@@ -121,9 +123,15 @@ struct ReceiveView: View {
                 .onChange(of: amountText) { _, _ in applyAmount() }
 
             if let sats = request?.amountSats, sats > 0 {
-                Text("\(Format.btc(sats)) BTC")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text("\(Format.btc(sats)) BTC")
+                        .font(.system(.caption, design: .monospaced))
+                    if let usd = store.usdApprox(sats) {
+                        Text(usd)
+                            .font(.system(.caption, design: .rounded).weight(.medium))
+                    }
+                }
+                .foregroundStyle(.secondary)
             }
         }
     }

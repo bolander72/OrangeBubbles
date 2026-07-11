@@ -58,13 +58,15 @@ Unit tests:
 cd app/WalletKit && swift test    # engine, backup crypto, payment requests
 ```
 
-## Getting started (server — optional)
+## Getting started (server — reference only, not deployed)
 
-The client talks straight to mempool.space in V0 (see
-[docs/decisions/0003-chain-api.md](docs/decisions/0003-chain-api.md)). The
-server exists so we can later move that traffic onto our own domain: it's an
-allowlisted Esplora-compatible proxy plus normalized fee estimates. It holds
-**no keys, no seeds, no xpubs, no accounts**.
+**Product policy: no Taproot Wizards server.** Everything runs on device
+against public APIs; users never depend on TW as a third party. The only
+hosted pieces are static files (AASA, card-URL fallback page, privacy
+policy) — see [docs/launch-blockers.md](docs/launch-blockers.md). This
+directory is kept as reference code (Esplora proxy + fee estimates + AASA
+route) in case the policy ever changes; it holds **no keys, no seeds, no
+xpubs, no accounts**.
 
 ```bash
 cd server

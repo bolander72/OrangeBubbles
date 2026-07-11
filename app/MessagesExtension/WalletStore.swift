@@ -26,6 +26,9 @@ final class WalletStore: ObservableObject {
     /// False when iCloud is unreachable and the backup only exists on this
     /// device (simulator, iCloud Drive off). Home shows a warning banner.
     @Published private(set) var backupInICloud = true
+    /// BTC/USD for display only (nil hides fiat lines). Fetched on-device
+    /// from a public API — no TW server involved.
+    @Published private(set) var usdPerBTC: Double?
 
     let chain: ChainConfig
     /// Wired by MessagesViewController; passkey sheets need a window.
@@ -40,6 +43,7 @@ final class WalletStore: ObservableObject {
     private let backupStore = ICloudBackupStore()
     private let faceID = FaceIDGate()
     private let feeEstimator = FeeEstimator()
+    private let priceOracle = PriceOracle()
     private var started = false
 
     init(chain: ChainConfig = .fromBundle()) {
@@ -135,6 +139,13 @@ final class WalletStore: ObservableObject {
         balance = engine.balance()
         transactions = engine.transactions()
         feeTiers = await feeEstimator.tiers(esploraURL: chain.esploraURL, feesURL: chain.feesURL)
+        usdPerBTC = await priceOracle.usdPerBTC() ?? usdPerBTC
+    }
+
+    /// "≈ $12.34" for display, or nil when the rate is unknown.
+    func usdApprox(_ sats: UInt64) -> String? {
+        guard let usdPerBTC, sats > 0 else { return nil }
+        return "≈ " + PriceOracle.usdString(sats: sats, usdPerBTC: usdPerBTC)
     }
 
     // MARK: - Receive
@@ -155,17 +166,64 @@ final class WalletStore: ObservableObject {
     }
 
     /// Face ID first, then build + sign. Returns the signed-but-unbroadcast
-    /// transaction for the review sheet.
-    func prepareSend(to address: String, amountSats: UInt64, feeRateSatPerVb: UInt64) async throws -> SignedSend {
+    /// transaction for the review sheet. `drain: true` sweeps everything
+    /// (Send Max) and ignores `amountSats`.
+    func prepareSend(
+        to address: String,
+        amountSats: UInt64,
+        feeRateSatPerVb: UInt64,
+        drain: Bool = false
+    ) async throws -> SignedSend {
         guard let engine else { throw WalletKitError.internalError("wallet not ready") }
         guard engine.validateAddress(address) else { throw WalletKitError.invalidAddress(address) }
+        if !drain, amountSats < dustLimitSats { throw WalletKitError.amountBelowDust }
         try await faceID.authenticate(reason: "Approve sending Bitcoin")
         return try await Self.offMain {
-            try engine.createSignedTransaction(
-                to: address,
-                amountSats: amountSats,
-                feeRateSatPerVb: feeRateSatPerVb
-            )
+            drain
+                ? try engine.createSignedDrain(to: address, feeRateSatPerVb: feeRateSatPerVb)
+                : try engine.createSignedTransaction(
+                    to: address,
+                    amountSats: amountSats,
+                    feeRateSatPerVb: feeRateSatPerVb
+                )
+        }
+    }
+
+    /// RBF speed-up of a pending outgoing tx at the current fastest rate.
+    /// Face ID gates it like any other spend, then broadcasts immediately.
+    func speedUp(txid: String) async throws -> String {
+        guard let engine else { throw WalletKitError.internalError("wallet not ready") }
+        try await faceID.authenticate(reason: "Approve the higher network fee")
+        let rate = max(feeTiers.fastestFee, feeTiers.minimumFee)
+        let esplora = chain.esploraURL
+        let newTxid = try await Self.offMain {
+            let bumped = try engine.createFeeBump(txid: txid, feeRateSatPerVb: rate)
+            return try engine.broadcast(bumped, esploraURL: esplora)
+        }
+        await refresh()
+        return newTxid
+    }
+
+    // MARK: - Settings
+
+    /// Face ID → the 12 words, for the advanced recovery escape hatch.
+    /// Never cached anywhere; the caller shows them and lets go.
+    func revealSeed() async throws -> [String] {
+        guard let secrets else { throw WalletKitError.internalError("wallet not ready") }
+        try await faceID.authenticate(reason: "Reveal your recovery phrase")
+        return secrets.mnemonic.split(separator: " ").map(String.init)
+    }
+
+    /// Re-saves the backup; if iCloud has become reachable since the last
+    /// save this migrates the local-only copy into the ubiquity container.
+    func ensureBackupInICloud() async {
+        try? await persistBackup()
+    }
+
+    var backupKeyProviderName: String {
+        switch sessionKey?.provider {
+        case "passkey-prf": return "Passkey (Face ID)"
+        default: return "iCloud Keychain + Face ID"
         }
     }
 
