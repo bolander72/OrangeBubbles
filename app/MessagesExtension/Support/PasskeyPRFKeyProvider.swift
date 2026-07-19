@@ -36,7 +36,7 @@ final class PasskeyPRFKeyProvider: NSObject, BackupKeyProvider, @unchecked Senda
     /// re-registration replaces the credential instead of piling up
     /// duplicates in the user's passkey list.
     private let userIDStore = SyncedKeychainKeyProvider(
-        service: "com.goldencompany.satchel.passkey-user-id"
+        service: "com.bolandcompany.satchel.passkey-user-id"
     )
 
     private var continuation: CheckedContinuation<ASAuthorization, Error>?

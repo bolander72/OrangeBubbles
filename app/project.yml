@@ -1,6 +1,6 @@
 name: Satchel
 options:
-  bundleIdPrefix: com.goldencompany
+  bundleIdPrefix: com.bolandcompany
   deploymentTarget:
     iOS: "17.5"
   createIntermediateGroups: true
@@ -11,7 +11,7 @@ settings:
     MARKETING_VERSION: 0.1.0
     CURRENT_PROJECT_VERSION: 1
     # Set your Apple Developer team here (or in Xcode) to run on device.
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: B28G4GL96T
   configs:
     debug:
       # Debug builds run on signet (Mutinynet) — free test coins.
@@ -35,7 +35,7 @@ targets:
       - target: WalletWidget
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.goldencompany.satchel
+        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.satchel
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
     info:
       path: HostApp/Info.plist
@@ -49,17 +49,17 @@ targets:
       path: HostApp/Satchel.entitlements
       properties:
         com.apple.developer.icloud-container-identifiers:
-          - iCloud.com.goldencompany.satchel
+          - iCloud.com.bolandcompany.satchel
         com.apple.developer.ubiquity-container-identifiers:
-          - iCloud.com.goldencompany.satchel
+          - iCloud.com.bolandcompany.satchel
         com.apple.developer.icloud-services:
           - CloudDocuments
         com.apple.developer.associated-domains:
           - webcredentials:wallet.taprootwizards.com
         com.apple.security.application-groups:
-          - group.com.goldencompany.satchel
+          - group.com.bolandcompany.satchel
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.goldencompany.satchel.shared
+          - $(AppIdentifierPrefix)com.bolandcompany.satchel.shared
 
   MessagesExtension:
     type: app-extension.messages
@@ -71,7 +71,7 @@ targets:
       - package: WalletKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.goldencompany.satchel.MessagesExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.satchel.MessagesExtension
         PRODUCT_NAME: Satchel
         # Distinct module name: the host app target is also named Satchel.
         PRODUCT_MODULE_NAME: SatchelMessages
@@ -93,17 +93,17 @@ targets:
       path: MessagesExtension/MessagesExtension.entitlements
       properties:
         com.apple.developer.icloud-container-identifiers:
-          - iCloud.com.goldencompany.satchel
+          - iCloud.com.bolandcompany.satchel
         com.apple.developer.ubiquity-container-identifiers:
-          - iCloud.com.goldencompany.satchel
+          - iCloud.com.bolandcompany.satchel
         com.apple.developer.icloud-services:
           - CloudDocuments
         com.apple.developer.associated-domains:
           - webcredentials:wallet.taprootwizards.com
         com.apple.security.application-groups:
-          - group.com.goldencompany.satchel
+          - group.com.bolandcompany.satchel
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.goldencompany.satchel.shared
+          - $(AppIdentifierPrefix)com.bolandcompany.satchel.shared
 
   WalletWidget:
     type: app-extension
@@ -113,7 +113,7 @@ targets:
       - Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.goldencompany.satchel.WalletWidget
+        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.satchel.WalletWidget
     info:
       path: WalletWidget/Info.plist
       properties:
@@ -124,4 +124,4 @@ targets:
       path: WalletWidget/WalletWidget.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.goldencompany.satchel
+          - group.com.bolandcompany.satchel

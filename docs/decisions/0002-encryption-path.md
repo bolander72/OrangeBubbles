@@ -19,7 +19,7 @@ output and could not decrypt the backup).
 
 1. Serve the AASA file at
    `https://wallet.taprootwizards.com/.well-known/apple-app-site-association`
-   with `webcredentials.apps = ["<TEAMID>.com.goldencompany.satchel.MessagesExtension"]`
+   with `webcredentials.apps = ["<TEAMID>.com.bolandcompany.satchel.MessagesExtension"]`
    — the server has the route (`APPLE_APP_IDS`); static hosting works too.
 2. Real signing with the associated-domains entitlement (already in
    project.yml) and the Associated Domains capability on the app ID.
