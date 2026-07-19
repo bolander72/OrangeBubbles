@@ -36,7 +36,7 @@ public struct SyncedKeychainKeyProvider: BackupKeyProvider {
     private let account: String
 
     public init(
-        service: String = "com.taprootwizards.imessagewallet.backup-key",
+        service: String = "com.goldencompany.satchel.backup-key",
         account: String = "primary"
     ) {
         self.service = service

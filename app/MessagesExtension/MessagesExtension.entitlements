@@ -8,7 +8,7 @@
 	</array>
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
-		<string>iCloud.com.taprootwizards.imessagewallet</string>
+		<string>iCloud.com.goldencompany.satchel</string>
 	</array>
 	<key>com.apple.developer.icloud-services</key>
 	<array>
@@ -16,15 +16,15 @@
 	</array>
 	<key>com.apple.developer.ubiquity-container-identifiers</key>
 	<array>
-		<string>iCloud.com.taprootwizards.imessagewallet</string>
+		<string>iCloud.com.goldencompany.satchel</string>
 	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.taprootwizards.imessagewallet</string>
+		<string>group.com.goldencompany.satchel</string>
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)com.taprootwizards.imessagewallet.shared</string>
+		<string>$(AppIdentifierPrefix)com.goldencompany.satchel.shared</string>
 	</array>
 </dict>
 </plist>

@@ -59,7 +59,7 @@ requirement, no user data:
 
 | Path | Purpose |
 | --- | --- |
-| `/.well-known/apple-app-site-association` | Passkey (PRF) domain association — the file that activates ADR 0002's end-state encryption. JSON with `webcredentials.apps = ["<TEAMID>.com.taprootwizards.imessagewallet.MessagesExtension"]`. Must be served as `application/json`, no redirect. |
+| `/.well-known/apple-app-site-association` | Passkey (PRF) domain association — the file that activates ADR 0002's end-state encryption. JSON with `webcredentials.apps = ["<TEAMID>.com.goldencompany.satchel.MessagesExtension"]`. Must be served as `application/json`, no redirect. |
 | `/pay` and `/paid` | Card-URL fallback. Every payment card carries `https://wallet.taprootwizards.com/pay?address=…&sats=…`. On Android/desktop/forwarded contexts that's currently a dead link. A static page (client-side JS reads the query string) should render the amount, address, QR / `bitcoin:` URI, and an App Store link. No data leaves the page. |
 | `/privacy` | Item 2. |
 

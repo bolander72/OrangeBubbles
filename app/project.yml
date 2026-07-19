@@ -1,6 +1,6 @@
 name: Satchel
 options:
-  bundleIdPrefix: com.taprootwizards
+  bundleIdPrefix: com.goldencompany
   deploymentTarget:
     iOS: "17.5"
   createIntermediateGroups: true
@@ -35,7 +35,7 @@ targets:
       - target: WalletWidget
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.taprootwizards.imessagewallet
+        PRODUCT_BUNDLE_IDENTIFIER: com.goldencompany.satchel
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
     info:
       path: HostApp/Info.plist
@@ -49,17 +49,17 @@ targets:
       path: HostApp/Satchel.entitlements
       properties:
         com.apple.developer.icloud-container-identifiers:
-          - iCloud.com.taprootwizards.imessagewallet
+          - iCloud.com.goldencompany.satchel
         com.apple.developer.ubiquity-container-identifiers:
-          - iCloud.com.taprootwizards.imessagewallet
+          - iCloud.com.goldencompany.satchel
         com.apple.developer.icloud-services:
           - CloudDocuments
         com.apple.developer.associated-domains:
           - webcredentials:wallet.taprootwizards.com
         com.apple.security.application-groups:
-          - group.com.taprootwizards.imessagewallet
+          - group.com.goldencompany.satchel
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.taprootwizards.imessagewallet.shared
+          - $(AppIdentifierPrefix)com.goldencompany.satchel.shared
 
   MessagesExtension:
     type: app-extension.messages
@@ -71,7 +71,7 @@ targets:
       - package: WalletKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.taprootwizards.imessagewallet.MessagesExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.goldencompany.satchel.MessagesExtension
         PRODUCT_NAME: Satchel
         # Distinct module name: the host app target is also named Satchel.
         PRODUCT_MODULE_NAME: SatchelMessages
@@ -93,17 +93,17 @@ targets:
       path: MessagesExtension/MessagesExtension.entitlements
       properties:
         com.apple.developer.icloud-container-identifiers:
-          - iCloud.com.taprootwizards.imessagewallet
+          - iCloud.com.goldencompany.satchel
         com.apple.developer.ubiquity-container-identifiers:
-          - iCloud.com.taprootwizards.imessagewallet
+          - iCloud.com.goldencompany.satchel
         com.apple.developer.icloud-services:
           - CloudDocuments
         com.apple.developer.associated-domains:
           - webcredentials:wallet.taprootwizards.com
         com.apple.security.application-groups:
-          - group.com.taprootwizards.imessagewallet
+          - group.com.goldencompany.satchel
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.taprootwizards.imessagewallet.shared
+          - $(AppIdentifierPrefix)com.goldencompany.satchel.shared
 
   WalletWidget:
     type: app-extension
@@ -113,7 +113,7 @@ targets:
       - Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.taprootwizards.imessagewallet.WalletWidget
+        PRODUCT_BUNDLE_IDENTIFIER: com.goldencompany.satchel.WalletWidget
     info:
       path: WalletWidget/Info.plist
       properties:
@@ -124,4 +124,4 @@ targets:
       path: WalletWidget/WalletWidget.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.taprootwizards.imessagewallet
+          - group.com.goldencompany.satchel
