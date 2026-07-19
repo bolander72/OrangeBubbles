@@ -8,7 +8,8 @@ import WalletKit
 struct CardStatusView: View {
     @ObservedObject var store: WalletStore
     @ObservedObject var bridge: ExtensionBridge
-    let card: IncomingCard
+    let request: PaymentRequest
+    let isReceipt: Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var status: Status = .checking
@@ -34,7 +35,7 @@ struct CardStatusView: View {
                 }
                 .padding(20)
             }
-            .navigationTitle(card.isReceipt ? "Payment" : "Payment request")
+            .navigationTitle(isReceipt ? "Payment" : "Payment request")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -45,7 +46,7 @@ struct CardStatusView: View {
         }
         .task { await check() }
         .sheet(isPresented: $showPay) {
-            SendView(store: store, bridge: bridge, prefill: card.request)
+            SendView(store: store, bridge: bridge, prefill: request)
         }
     }
 
@@ -102,7 +103,7 @@ struct CardStatusView: View {
         case .checking:
             return nil
         case .awaitingPayment:
-            return card.request.amountSats.map { "Requesting \(Format.sats($0)) sats" } ?? "No payment seen yet"
+            return request.amountSats.map { "Requesting \(Format.sats($0)) sats" } ?? "No payment seen yet"
         case .inMempool(let sats):
             return "\(Format.sats(sats)) sats in the mempool — usually confirms within the hour."
         case .paidConfirmed(let sats):
@@ -118,12 +119,12 @@ struct CardStatusView: View {
 
     private var detailsCard: some View {
         VStack(spacing: 0) {
-            if let sats = card.request.amountSats {
+            if let sats = request.amountSats {
                 row("Amount", "\(Format.sats(sats)) sats")
                 Divider().padding(.horizontal, 16)
             }
-            row("Address", Format.shortAddress(card.request.address, prefix: 14, suffix: 10), monospaced: true)
-            if let txid = card.request.txid {
+            row("Address", Format.shortAddress(request.address, prefix: 14, suffix: 10), monospaced: true)
+            if let txid = request.txid {
                 Divider().padding(.horizontal, 16)
                 row("Transaction", "\(txid.prefix(10))…\(txid.suffix(8))", monospaced: true)
             }
@@ -153,7 +154,7 @@ struct CardStatusView: View {
     private var actions: some View {
         VStack(spacing: 10) {
             // Unpaid request → the primary action is paying it.
-            if !card.isReceipt, case .awaitingPayment = status {
+            if !isReceipt, case .awaitingPayment = status {
                 Button {
                     showPay = true
                 } label: {
@@ -167,7 +168,7 @@ struct CardStatusView: View {
             // Settled either way → offer replacing the card with its outcome.
             if canShareUpdate {
                 Button {
-                    var updated = card.request
+                    var updated = request
                     updated.label = nil
                     bridge.insertCard(for: updated, kind: .sent, updateSelectedCard: true)
                     dismiss()
@@ -177,7 +178,7 @@ struct CardStatusView: View {
                 .buttonStyle(QuietButtonStyle())
             }
 
-            if let txid = card.request.txid {
+            if let txid = request.txid {
                 Link(destination: store.chain.explorerURL(txid: txid)) {
                     HStack(spacing: 5) {
                         Image(systemName: "safari")
@@ -206,12 +207,12 @@ struct CardStatusView: View {
         // Same-chain endpoints; try each until one answers.
         for (index, esplora) in store.chain.esploraURLs.enumerated() {
             do {
-                if let txid = card.request.txid {
+                if let txid = request.txid {
                     let tx = try await probe.txConfirmation(txid: txid, esploraURL: esplora)
                     status = tx.confirmed ? .txConfirmed(when: tx.blockTime) : .txPending
                 } else {
                     let activity = try await probe.addressActivity(
-                        address: card.request.address,
+                        address: request.address,
                         esploraURL: esplora
                     )
                     if activity.hasConfirmed {

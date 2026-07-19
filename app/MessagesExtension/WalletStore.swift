@@ -68,6 +68,7 @@ final class WalletStore: ObservableObject {
             return
         }
         started = true
+        loadGifts()
         await bootstrap()
     }
 
@@ -332,6 +333,81 @@ final class WalletStore: ObservableObject {
             }
         }
         throw WalletKitError.networkUnreachable
+    }
+
+    // MARK: - Claimable gifts (ADR 0005)
+
+    struct GiftRecord: Codable, Equatable, Identifiable {
+        let voucher: ClaimVoucher
+        let fundingTxid: String
+        var id: String { voucher.address }
+    }
+
+    private static let giftLedgerKey = "claimLedger.v1"
+    @Published private(set) var outstandingGifts: [GiftRecord] = []
+
+    func loadGifts() {
+        guard let data = UserDefaults.standard.data(forKey: Self.giftLedgerKey) else { return }
+        outstandingGifts = (try? JSONDecoder().decode([GiftRecord].self, from: data)) ?? []
+    }
+
+    private func saveGifts() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(outstandingGifts), forKey: Self.giftLedgerKey)
+    }
+
+    func isOwnGift(_ voucher: ClaimVoucher) -> Bool {
+        outstandingGifts.contains { $0.voucher.address == voucher.address }
+    }
+
+    /// Generates a voucher and the Face-ID-gated funding transaction.
+    /// Nothing is broadcast or recorded until `fundGift` runs.
+    func prepareGift(amountSats: UInt64, feeRateSatPerVb: UInt64) async throws -> (ClaimVoucher, SignedSend) {
+        guard engine != nil else { throw WalletKitError.internalError("wallet not ready") }
+        let network = chain.network
+        let voucher = try await Self.offMain {
+            try ClaimVoucher.generate(network: network, amountSats: amountSats)
+        }
+        let send = try await prepareSend(
+            to: voucher.address,
+            amountSats: amountSats,
+            feeRateSatPerVb: feeRateSatPerVb
+        )
+        return (voucher, send)
+    }
+
+    /// Broadcasts the funding tx and remembers the gift for reclaim.
+    func fundGift(_ voucher: ClaimVoucher, send: SignedSend) async throws -> String {
+        let txid = try await broadcast(send)
+        outstandingGifts.append(GiftRecord(voucher: voucher, fundingTxid: txid))
+        saveGifts()
+        return txid
+    }
+
+    /// Sweeps a voucher into this wallet — used identically by recipients
+    /// (claim) and senders (cancel/reclaim); the chain arbitrates races.
+    /// Claiming is receiving, so there is no Face ID gate.
+    func redeem(_ voucher: ClaimVoucher) async throws -> UInt64 {
+        guard let engine else { throw WalletKitError.internalError("wallet not ready") }
+        guard voucher.network == chain.network else {
+            throw WalletKitError.internalError("This gift is on \(voucher.network.rawValue); this wallet is on \(chain.network.rawValue).")
+        }
+        let destination = try await Self.offMain { try engine.nextReceiveAddress() }.address
+        let rate = max(feeTiers.halfHourFee, feeTiers.minimumFee)
+        let swept = try await withEsploraFailover { esplora in
+            try await Self.offMain {
+                try ClaimVoucher.sweep(
+                    mnemonic: voucher.mnemonic,
+                    network: voucher.network,
+                    to: destination,
+                    esploraURL: esplora,
+                    feeRateSatPerVb: rate
+                )
+            }
+        }
+        outstandingGifts.removeAll { $0.voucher.address == voucher.address }
+        saveGifts()
+        await refresh()
+        return swept.sweptSats
     }
 
     // MARK: - Settings

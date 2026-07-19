@@ -4,10 +4,14 @@ import Foundation
 public struct AddressActivity: Equatable, Sendable {
     public var confirmedReceivedSats: UInt64
     public var mempoolReceivedSats: UInt64
+    public var spentSats: UInt64
 
     public var hasConfirmed: Bool { confirmedReceivedSats > 0 }
     public var hasPending: Bool { mempoolReceivedSats > 0 }
     public var hasAny: Bool { hasConfirmed || hasPending }
+    /// Funds arrived and were spent again — for a claim voucher this
+    /// means it was already swept (claimed or reclaimed).
+    public var wasSwept: Bool { spentSats > 0 }
 }
 
 public struct TxConfirmation: Equatable, Sendable {
@@ -29,6 +33,7 @@ public struct StatusProbe: Sendable {
     public func addressActivity(address: String, esploraURL: URL) async throws -> AddressActivity {
         struct Stats: Codable {
             let funded_txo_sum: UInt64
+            let spent_txo_sum: UInt64
         }
         struct AddressInfo: Codable {
             let chain_stats: Stats
@@ -42,7 +47,8 @@ public struct StatusProbe: Sendable {
         let info = try JSONDecoder().decode(AddressInfo.self, from: data)
         return AddressActivity(
             confirmedReceivedSats: info.chain_stats.funded_txo_sum,
-            mempoolReceivedSats: info.mempool_stats.funded_txo_sum
+            mempoolReceivedSats: info.mempool_stats.funded_txo_sum,
+            spentSats: info.chain_stats.spent_txo_sum + info.mempool_stats.spent_txo_sum
         )
     }
 

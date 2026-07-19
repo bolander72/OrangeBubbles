@@ -57,22 +57,61 @@ final class ExtensionBridge: ObservableObject {
         }
     }
 
-    /// A tapped card opens the live status view (which offers Pay for
-    /// unpaid requests). The card's session is kept so a status update can
-    /// replace the bubble in place.
+    /// Inserts a claimable-gift card (ADR 0005). The voucher secret rides
+    /// in the message URL — end-to-end encrypted by iMessage.
+    func insertClaimCard(for voucher: ClaimVoucher) {
+        guard let conversation else { return }
+
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "wallet.taprootwizards.com"
+        components.path = "/claim"
+        components.queryItems = voucher.queryItems()
+
+        let layout = MSMessageTemplateLayout()
+        layout.image = CardImageRenderer.render(
+            kind: .gift,
+            request: PaymentRequest(address: voucher.address, amountSats: voucher.amountSats)
+        )
+        layout.caption = "Tap to claim with Satchel"
+
+        let message = MSMessage(session: MSSession())
+        message.url = components.url
+        message.layout = layout
+        message.summaryText = "₿ Bitcoin gift"
+
+        conversation.insert(message) { error in
+            if let error { NSLog("claim card insert failed: \(error)") }
+        }
+    }
+
+    /// A tapped card opens the matching view: live status (payment cards)
+    /// or the claim screen (gift cards). The card's session is kept so a
+    /// status update can replace the bubble in place.
     func handleSelected(_ message: MSMessage, store: WalletStore) {
         guard
             let url = message.url,
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let items = components.queryItems,
-            let request = PaymentRequest(queryItems: items)
+            let items = components.queryItems
         else { return }
 
         selectedSession = message.session
-        store.incomingRequest = IncomingCard(
-            request: request,
-            isReceipt: components.path == "/paid"
-        )
+
+        switch components.path {
+        case "/claim":
+            // Voucher parsing derives the claim address from the secret —
+            // a real wallet-engine construction — so keep it off-main.
+            Task { [weak store] in
+                let voucher = await Task.detached { ClaimVoucher(queryItems: items) }.value
+                guard let voucher, let store else { return }
+                store.incomingRequest = IncomingCard(kind: .claim(voucher))
+            }
+        default:
+            guard let request = PaymentRequest(queryItems: items) else { return }
+            store.incomingRequest = IncomingCard(
+                kind: .payment(request, isReceipt: components.path == "/paid")
+            )
+        }
         requestExpanded()
     }
 
@@ -83,8 +122,19 @@ final class ExtensionBridge: ObservableObject {
 }
 
 struct IncomingCard: Equatable, Identifiable {
-    var request: PaymentRequest
-    var isReceipt: Bool
+    enum Kind: Equatable {
+        case payment(PaymentRequest, isReceipt: Bool)
+        case claim(ClaimVoucher)
+    }
 
-    var id: String { "\(request.address)|\(request.txid ?? "")" }
+    let kind: Kind
+
+    var id: String {
+        switch kind {
+        case .payment(let request, let isReceipt):
+            return "p|\(request.address)|\(request.txid ?? "")|\(isReceipt)"
+        case .claim(let voucher):
+            return "c|\(voucher.address)"
+        }
+    }
 }

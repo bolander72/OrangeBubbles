@@ -9,6 +9,7 @@ enum CardImageRenderer {
     enum Kind {
         case request
         case receipt
+        case gift
     }
 
     private static let size = CGSize(width: 300, height: 210)
@@ -27,7 +28,12 @@ enum CardImageRenderer {
             drawMark(kind: kind, in: markRect, context: context.cgContext)
 
             // Title + subtitle
-            let title = kind == .request ? "Bitcoin requested" : "Bitcoin sent"
+            let title: String
+            switch kind {
+            case .request: title = "Bitcoin requested"
+            case .receipt: title = "Bitcoin sent"
+            case .gift: title = "Bitcoin gift 🎁"
+            }
             let titleAttrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.rounded(size: 20, weight: .bold),
                 .foregroundColor: UIColor.white,
@@ -85,6 +91,11 @@ enum CardImageRenderer {
                 UIColor(red: 0.13, green: 0.68, blue: 0.38, alpha: 1).cgColor,
                 UIColor(red: 0.05, green: 0.52, blue: 0.28, alpha: 1).cgColor,
             ]
+        case .gift:
+            colors = [
+                UIColor(red: 0.56, green: 0.27, blue: 0.90, alpha: 1).cgColor,
+                UIColor(red: 0.36, green: 0.13, blue: 0.71, alpha: 1).cgColor,
+            ]
         }
         guard let gradient = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
@@ -112,7 +123,12 @@ enum CardImageRenderer {
         context.fillEllipse(in: rect)
         context.restoreGState()
 
-        let symbolName = kind == .request ? "bitcoinsign" : "checkmark"
+        let symbolName: String
+        switch kind {
+        case .request: symbolName = "bitcoinsign"
+        case .receipt: symbolName = "checkmark"
+        case .gift: symbolName = "gift.fill"
+        }
         let config = UIImage.SymbolConfiguration(pointSize: 22, weight: .bold)
         guard let symbol = UIImage(systemName: symbolName, withConfiguration: config)?
             .withTintColor(.white, renderingMode: .alwaysOriginal)

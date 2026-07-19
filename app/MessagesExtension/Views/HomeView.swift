@@ -46,6 +46,12 @@ struct HomeView: View {
                 .padding(.top, 12)
             }
 
+            if !bridge.isCompact, !store.outstandingGifts.isEmpty {
+                giftsSection
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+            }
+
             if !bridge.isCompact {
                 activity
                     .padding(.top, 18)
@@ -60,7 +66,12 @@ struct HomeView: View {
             SendView(store: store, bridge: bridge, prefill: nil)
         }
         .sheet(item: incomingCard) { card in
-            CardStatusView(store: store, bridge: bridge, card: card)
+            switch card.kind {
+            case .payment(let request, let isReceipt):
+                CardStatusView(store: store, bridge: bridge, request: request, isReceipt: isReceipt)
+            case .claim(let voucher):
+                ClaimCardView(store: store, voucher: voucher)
+            }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView(store: store)
@@ -188,6 +199,54 @@ struct HomeView: View {
                 .refreshable { await store.refresh() }
             }
         }
+    }
+
+    @State private var giftToManage: ClaimVoucher?
+
+    private var giftsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Outstanding gifts")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            ForEach(store.outstandingGifts) { gift in
+                Button {
+                    giftToManage = gift.voucher
+                } label: {
+                    HStack(spacing: 10) {
+                        IconBubble(systemName: "gift.fill", tint: .purple, size: 32)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(Format.sats(gift.voucher.amountSats)) sats")
+                                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(gift.voucher.isExpired
+                                ? "Expired — tap to reclaim"
+                                : "Unclaimed · expires \(Format.relative(gift.voucher.expiresAt))")
+                                .font(.caption2)
+                                .foregroundStyle(gift.voucher.isExpired ? Color.orange : Color.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.quaternary)
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(.secondarySystemBackground))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .sheet(item: giftBinding) { voucher in
+            ClaimCardView(store: store, voucher: voucher)
+        }
+    }
+
+    private var giftBinding: Binding<ClaimVoucher?> {
+        Binding(get: { giftToManage }, set: { giftToManage = $0 })
     }
 
     private func speedUp(_ txid: String) {

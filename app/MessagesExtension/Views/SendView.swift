@@ -11,8 +11,15 @@ struct SendView: View {
     private enum Stage {
         case compose
         case review(SignedSend)
+        case reviewGift(ClaimVoucher, SignedSend)
         case broadcasting
         case sent(txid: String, details: PreparedSend)
+        case sentGift(ClaimVoucher)
+    }
+
+    enum SendMode: String, CaseIterable {
+        case address = "To address"
+        case gift = "As a gift"
     }
 
     @State private var stage: Stage = .compose
@@ -23,6 +30,7 @@ struct SendView: View {
     /// Send Max: sweep every UTXO; the fee comes out of the total.
     @State private var sendMax = false
     @State private var showScanner = false
+    @State private var mode: SendMode = .address
     @State private var showSmartAmount = false
     @State private var smartAmountText = ""
 
@@ -118,16 +126,19 @@ struct SendView: View {
 
     private var navigationTitle: String {
         switch stage {
-        case .compose: return "Send Bitcoin"
-        case .review: return "Confirm"
+        case .compose: return mode == .gift ? "Send a Gift" : "Send Bitcoin"
+        case .review, .reviewGift: return "Confirm"
         case .broadcasting: return ""
         case .sent: return "Sent"
+        case .sentGift: return "Gift ready"
         }
     }
 
     private var doneButtonTitle: String {
-        if case .sent = stage { return "Done" }
-        return "Cancel"
+        switch stage {
+        case .sent, .sentGift: return "Done"
+        default: return "Cancel"
+        }
     }
 
     private var isMidFlight: Bool {
@@ -144,6 +155,10 @@ struct SendView: View {
             composeForm
         case .review(let send):
             reviewSheet(send)
+        case .reviewGift(let voucher, let send):
+            reviewGiftSheet(voucher, send)
+        case .sentGift(let voucher):
+            sentGiftView(voucher)
         case .broadcasting:
             VStack(spacing: 14) {
                 ProgressView().controlSize(.large).tint(Brand.orange)
@@ -166,7 +181,25 @@ struct SendView: View {
     private var composeForm: some View {
         ScrollView {
             VStack(spacing: 16) {
+                if prefill == nil {
+                    Picker("Send mode", selection: $mode) {
+                        ForEach(SendMode.allCases, id: \.self) { m in
+                            Text(m.rawValue).tag(m)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                if mode == .gift {
+                    InfoBanner(
+                        systemName: "gift.fill",
+                        text: "A gift needs no address — the claim travels inside the message. Anyone who can read the message can claim it, so keep gifts casual-sized. You can take it back until it's claimed.",
+                        tint: .purple
+                    )
+                }
+
                 // Destination
+                if mode == .address {
                 VStack(alignment: .leading, spacing: 6) {
                     fieldLabel("To")
                     HStack(spacing: 8) {
@@ -230,6 +263,7 @@ struct SendView: View {
                             tint: .red
                         )
                     }
+                }
                 }
 
                 // Amount
@@ -296,6 +330,7 @@ struct SendView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
+                        if mode == .address {
                         Button {
                             withAnimation(.spring(response: 0.25)) { sendMax.toggle() }
                             Haptics.tap()
@@ -308,11 +343,19 @@ struct SendView: View {
                                 .foregroundStyle(Brand.orangeDeep)
                         }
                         .accessibilityLabel(sendMax ? "Switch to entering an amount" : "Send entire balance")
+                        }
                     }
                     .padding(.horizontal, 4)
+                    .onChange(of: mode) { _, _ in sendMax = false }
 
-                    if dustWarning {
+                    if dustWarning, mode == .address {
                         Text("Minimum send is \(Format.sats(dustLimitSats)) sats.")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .padding(.leading, 4)
+                    }
+                    if giftTooSmall {
+                        Text("Minimum gift is \(Format.sats(ClaimVoucher.minimumSats)) sats — it has to cover its own claim fee.")
                             .font(.caption)
                             .foregroundStyle(.red)
                             .padding(.leading, 4)
@@ -411,7 +454,15 @@ struct SendView: View {
     }
 
     private var canReview: Bool {
-        addressIsValid && (sendMax || (parsedAmount.map { $0 >= dustLimitSats } ?? false))
+        if mode == .gift {
+            return parsedAmount.map { $0 >= ClaimVoucher.minimumSats } ?? false
+        }
+        return addressIsValid && (sendMax || (parsedAmount.map { $0 >= dustLimitSats } ?? false))
+    }
+
+    private var giftTooSmall: Bool {
+        guard mode == .gift, let sats = parsedAmount else { return false }
+        return sats < ClaimVoucher.minimumSats
     }
 
     private var isLargeSend: Bool {
@@ -425,17 +476,111 @@ struct SendView: View {
         working = true
         defer { working = false }
         do {
-            let send = try await store.prepareSend(
-                to: address.trimmingCharacters(in: .whitespacesAndNewlines),
-                amountSats: parsedAmount ?? 0,
-                feeRateSatPerVb: feeChoice.satPerVb(store.feeTiers),
-                drain: sendMax
-            )
-            withAnimation { stage = .review(send) }
+            if mode == .gift, let sats = parsedAmount {
+                let (voucher, send) = try await store.prepareGift(
+                    amountSats: sats,
+                    feeRateSatPerVb: feeChoice.satPerVb(store.feeTiers)
+                )
+                withAnimation { stage = .reviewGift(voucher, send) }
+            } else {
+                let send = try await store.prepareSend(
+                    to: address.trimmingCharacters(in: .whitespacesAndNewlines),
+                    amountSats: parsedAmount ?? 0,
+                    feeRateSatPerVb: feeChoice.satPerVb(store.feeTiers),
+                    drain: sendMax
+                )
+                withAnimation { stage = .review(send) }
+            }
         } catch {
             Haptics.warning()
             store.lastError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
         }
+    }
+
+    // MARK: - Gift review / sent
+
+    private func reviewGiftSheet(_ voucher: ClaimVoucher, _ send: SignedSend) -> some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 0) {
+                receiptRow("Gift amount", "\(Format.sats(send.details.amountSats)) sats")
+                Divider().padding(.horizontal, 16)
+                receiptRow("Network fee", "\(Format.sats(send.details.feeSats)) sats")
+                Divider().padding(.horizontal, 16)
+                receiptRow("Total", "\(Format.sats(send.details.totalSats)) sats", emphasized: true)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+            )
+
+            Text("The recipient pays a small claim fee out of the gift. Unclaimed gifts can be taken back — this one expires \(voucher.expiresAt.formatted(date: .abbreviated, time: .omitted)).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            Button {
+                Task { await fundGift(voucher, send) }
+            } label: {
+                Label("Create gift", systemImage: "gift.fill")
+            }
+            .buttonStyle(ProminentButtonStyle())
+
+            Button("Back") {
+                withAnimation { stage = .compose }
+            }
+            .font(.system(.body, design: .rounded).weight(.medium))
+            .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+    }
+
+    private func fundGift(_ voucher: ClaimVoucher, _ send: SignedSend) async {
+        withAnimation { stage = .broadcasting }
+        do {
+            _ = try await store.fundGift(voucher, send: send)
+            Haptics.success()
+            withAnimation(.spring(response: 0.4)) { stage = .sentGift(voucher) }
+        } catch {
+            Haptics.warning()
+            store.lastError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            withAnimation { stage = .reviewGift(voucher, send) }
+        }
+    }
+
+    private func sentGiftView(_ voucher: ClaimVoucher) -> some View {
+        VStack(spacing: 16) {
+            Spacer(minLength: 10)
+
+            IconBubble(systemName: "gift.fill", tint: .purple, size: 84)
+
+            VStack(spacing: 4) {
+                Text("Gift of \(Format.sats(voucher.amountSats)) sats ready")
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                Text("Add the card to the chat and hit send —\nthey can claim it the moment they get Satchel.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button {
+                bridge.insertClaimCard(for: voucher)
+                dismiss()
+            } label: {
+                Label("Add gift card to chat", systemImage: "message.fill")
+            }
+            .buttonStyle(ProminentButtonStyle())
+            .padding(.horizontal)
+
+            Text("You can take the gift back from your wallet's home screen until it's claimed.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+
+            Spacer(minLength: 10)
+        }
+        .padding(20)
     }
 
     // MARK: - Review

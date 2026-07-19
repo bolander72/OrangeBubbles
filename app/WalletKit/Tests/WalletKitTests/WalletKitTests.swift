@@ -154,6 +154,32 @@ final class SmartAmountTests: XCTestCase {
     }
 }
 
+final class ClaimVoucherTests: XCTestCase {
+    func testGenerateParseRoundTripDerivesSameAddress() throws {
+        let voucher = try ClaimVoucher.generate(network: .signet, amountSats: 5_000)
+        XCTAssertTrue(voucher.address.hasPrefix("tb1q"))
+
+        let parsed = ClaimVoucher(queryItems: voucher.queryItems())
+        XCTAssertNotNil(parsed)
+        XCTAssertEqual(parsed?.address, voucher.address, "address must re-derive from the secret")
+        XCTAssertEqual(parsed?.amountSats, 5_000)
+        XCTAssertEqual(parsed?.network, .signet)
+    }
+
+    func testMinimumGiftEnforced() {
+        XCTAssertThrowsError(try ClaimVoucher.generate(network: .signet, amountSats: 500))
+    }
+
+    func testRejectsMalformedSecrets() {
+        let items = [
+            URLQueryItem(name: "m", value: "not a real mnemonic"),
+            URLQueryItem(name: "sats", value: "5000"),
+            URLQueryItem(name: "net", value: "signet"),
+        ]
+        XCTAssertNil(ClaimVoucher(queryItems: items))
+    }
+}
+
 final class BackupVersioningTests: XCTestCase {
     private func makeSecrets(hint: UInt32) -> WalletSecrets {
         WalletSecrets(
