@@ -284,6 +284,23 @@ struct TransactionRow: View {
     let explorerURL: URL
     var onSpeedUp: (() -> Void)?
 
+    /// An outgoing tx whose outputs all came back to us — a self-transfer.
+    private var isSelfTransfer: Bool {
+        tx.direction == .outgoing && tx.amountSats == 0
+    }
+
+    private var rowTitle: String {
+        if isSelfTransfer { return "Sent to yourself" }
+        return tx.direction == .incoming ? "Received" : "Sent"
+    }
+
+    private var amountLabel: String {
+        if isSelfTransfer {
+            return tx.feeSats.map { "−\(Format.sats($0)) fee" } ?? "±0"
+        }
+        return (tx.direction == .incoming ? "+" : "−") + Format.sats(tx.amountSats)
+    }
+
     var body: some View {
         Button {
             openURL(explorerURL)
@@ -295,7 +312,7 @@ struct TransactionRow: View {
                 )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(tx.direction == .incoming ? "Received" : "Sent")
+                    Text(rowTitle)
                         .font(.system(.subheadline, design: .rounded).weight(.semibold))
                         .foregroundStyle(.primary)
                     if tx.confirmed {
@@ -315,7 +332,7 @@ struct TransactionRow: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 3) {
-                    Text((tx.direction == .incoming ? "+" : "−") + Format.sats(tx.amountSats))
+                    Text(amountLabel)
                         .font(.system(.subheadline, design: .rounded).weight(.bold))
                         .foregroundStyle(tx.direction == .incoming ? .green : .primary)
 

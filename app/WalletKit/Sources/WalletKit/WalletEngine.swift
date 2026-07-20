@@ -98,14 +98,14 @@ public final class WalletEngine: @unchecked Sendable {
         return (info.address.description, info.index)
     }
 
-    /// Upcoming receive addresses (peeked, not revealed) — exported to the
-    /// shared snapshot so Siri/widgets can hand out an address without any
-    /// key material. Peeking doesn't advance the wallet; the next real
-    /// `nextReveal` returns the same first address.
-    public func peekUpcomingReceiveAddresses(count: UInt32) -> [String] {
-        // derivationIndex is the highest *revealed* index; the next fresh
-        // address the wallet will hand out is one past it.
+    /// Upcoming receive addresses for the shared snapshot (Siri/widget).
+    /// These are REVEALED, not peeked: an address we hand out must be
+    /// watched by incremental sync, or money sent to it is invisible
+    /// until a full rescan. Idempotent across refreshes until one is used.
+    public func revealUpcomingReceiveAddresses(count: UInt32) throws -> [String] {
         let start = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
+        _ = wallet.revealAddressesTo(keychain: .external, index: start + count - 1)
+        try persist()
         return (start..<(start + count)).map {
             wallet.peekAddress(keychain: .external, index: $0).address.description
         }

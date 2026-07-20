@@ -222,7 +222,17 @@ final class WalletStore: ObservableObject {
             Haptics.success()
         }
         hasLoadedOnce = true
+
+        // Keep the handed-out (Siri/widget) addresses revealed & backed up.
+        let before = engine.revealedIndexes().receive
+        upcomingAddresses = (try? await Self.offMain { try engine.revealUpcomingReceiveAddresses(count: 3) }) ?? []
+        if engine.revealedIndexes().receive != before {
+            try? await persistBackup()
+        }
     }
+
+    /// Snapshot-published addresses; revealed so sync watches them.
+    private var upcomingAddresses: [String] = []
 
     /// "≈ $12.34" for display, or nil when the rate is unknown.
     func usdApprox(_ sats: UInt64) -> String? {
@@ -247,7 +257,7 @@ final class WalletStore: ObservableObject {
                 )
             },
             network: chain.network.rawValue,
-            upcomingReceiveAddresses: engine.peekUpcomingReceiveAddresses(count: 3),
+            upcomingReceiveAddresses: upcomingAddresses,
             usdPerBTC: usdPerBTC,
             updatedAt: Date()
         ).save()
