@@ -8,6 +8,11 @@ struct SettingsView: View {
     @State private var seedWords: [String]?
     @State private var migrating = false
     @State private var showSecurityExplainer = false
+    #if DEBUG
+        @State private var showClaimLinkPrompt = false
+        @State private var claimLinkText = ""
+        @State private var debugVoucher: ClaimVoucher?
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -15,6 +20,9 @@ struct SettingsView: View {
                 backupSection
                 recoverySection
                 aboutSection
+                #if DEBUG
+                    developerSection
+                #endif
             }
             .navigationTitle("Wallet Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -131,6 +139,49 @@ struct SettingsView: View {
             LabeledContent("Keys", value: "Generated & stored on device")
         }
     }
+
+    // MARK: - DEBUG-only developer tools
+
+    #if DEBUG
+        @ViewBuilder
+        private var developerSection: some View {
+            Section("Developer") {
+                Button {
+                    showClaimLinkPrompt = true
+                } label: {
+                    Label("Open a claim link…", systemImage: "link")
+                }
+                Text("Paste a gift card's URL (long-press the bubble → Copy) to act as the recipient on this device. Debug builds only — real recipients just tap the card.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .alert("Open claim link", isPresented: $showClaimLinkPrompt) {
+                TextField("https://…/claim?…", text: $claimLinkText)
+                Button("Open") {
+                    let text = claimLinkText
+                    claimLinkText = ""
+                    Task {
+                        let voucher = await Task.detached { () -> ClaimVoucher? in
+                            guard
+                                let components = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+                                let items = components.queryItems
+                            else { return nil }
+                            return ClaimVoucher(queryItems: items)
+                        }.value
+                        if let voucher {
+                            debugVoucher = voucher
+                        } else {
+                            store.lastError = "That doesn't look like a claim link."
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) { claimLinkText = "" }
+            }
+            .sheet(item: $debugVoucher) { voucher in
+                ClaimCardView(store: store, voucher: voucher)
+            }
+        }
+    #endif
 }
 
 private struct SeedWords: Identifiable {
