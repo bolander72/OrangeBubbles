@@ -20,13 +20,15 @@ struct ReceiveView: View {
                         amountField
                         shareButton(for: request)
 
-                        Label(
-                            "Fresh address, never used before. Address reuse hurts privacy — tap Receive again next time.",
-                            systemImage: "leaf.fill"
-                        )
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.leading)
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "leaf.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.green)
+                            Text("Fresh address, never used before. Address reuse hurts privacy — tap Receive again next time.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
                         .padding(.horizontal, 6)
                     } else {
                         ProgressView().padding(.top, 60)

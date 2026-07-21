@@ -33,6 +33,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .tint(.blue)
         .sheet(item: seedSheet) { words in
             SeedRevealView(words: words.items)
         }
@@ -205,12 +206,14 @@ struct SecurityExplainerView: View {
                 VStack(spacing: 14) {
                     explainerCard(
                         icon: "iphone",
+                        tint: .blue,
                         title: "Your keys live on this iPhone",
                         body: "The wallet is a 12-word secret generated on your device. It is never shown, uploaded, or shared — it only exists in this device's memory while the wallet is unlocked."
                     )
 
                     explainerCard(
                         icon: "lock.icloud.fill",
+                        tint: .teal,
                         title: "Your backup lives in your iCloud",
                         body: usesPasskey
                             ? "An encrypted copy of the secret is stored in your personal iCloud Drive. The key that unlocks it comes from a passkey that requires your Face ID — nobody, including Apple or Taproot Wizards, can decrypt the backup without you."
@@ -219,18 +222,21 @@ struct SecurityExplainerView: View {
 
                     explainerCard(
                         icon: "faceid",
+                        tint: .green,
                         title: "Face ID guards your money",
                         body: "Sending bitcoin and revealing the recovery phrase always require Face ID (or your device passcode). Checking your balance and receiving don't — like a mailbox, anyone can drop money in, only you can take it out."
                     )
 
                     explainerCard(
                         icon: "arrow.triangle.2.circlepath.icloud",
+                        tint: .indigo,
                         title: "Losing your phone isn't losing your bitcoin",
                         body: "Sign into iCloud on a new iPhone, open Satchel, and unlock — the backup and its key sync down and the same wallet is rebuilt. The recovery phrase in Settings is a manual backstop on top of that."
                     )
 
                     explainerCard(
                         icon: "eye.slash.fill",
+                        tint: .purple,
                         title: "No accounts. No servers. No tracking.",
                         body: "Taproot Wizards runs no server for this wallet and never sees your keys, balances, or activity. The app reads the Bitcoin network directly from public sources — like any other bitcoin node or explorer."
                     )
@@ -248,9 +254,9 @@ struct SecurityExplainerView: View {
         }
     }
 
-    private func explainerCard(icon: String, title: String, body: String) -> some View {
+    private func explainerCard(icon: String, tint: Color, title: String, body: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            IconBubble(systemName: icon, tint: Brand.orange, size: 40)
+            IconBubble(systemName: icon, tint: tint, size: 40)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(.subheadline, design: .rounded).weight(.bold))

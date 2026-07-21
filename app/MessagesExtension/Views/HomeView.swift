@@ -40,7 +40,8 @@ struct HomeView: View {
             if !store.backupInICloud {
                 InfoBanner(
                     systemName: "icloud.slash.fill",
-                    text: "iCloud unavailable — this wallet lives only on this device."
+                    text: "Heads up: iCloud isn't reachable, so this wallet is only backed up on this device for now.",
+                    tint: .blue
                 )
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
