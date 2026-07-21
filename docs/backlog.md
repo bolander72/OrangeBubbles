@@ -101,7 +101,17 @@ host app to grow a minimal "open this payment in Messages" hand-off view.
 
 **Trigger to build:** with the static site (launch-blockers item 3).
 
-## 8. Multi-device same-wallet writes — accepted behavior
+## 8. Spending Connections (MagicPay integration)
+
+Fully specced in [ADR 0006](decisions/0006-spending-connections.md):
+capped, revocable allowance wallets derived from the wallet passkey via
+per-connection PRF salts — the cap is the balance, enforced by
+consensus. OrangeBubbles side is ~70% reusable from gift machinery.
+
+**Trigger to build:** MagicPay team commits to their side (native PRF
+assertion + AASA entry); build OB side behind a debug flag first.
+
+## 9. Multi-device same-wallet writes — accepted behavior
 
 Two iPhones on one Apple ID can both unlock the wallet and race the backup
 reseal (last writer wins; `NSFileCoordinator` prevents torn writes; the
