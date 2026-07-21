@@ -17,13 +17,27 @@ import Security
 /// Face ID at the app layer.
 public struct LocalSecretsStore: Sendable {
     private let service: String
+    private let legacyService: String?
     private let account = "wallet-secrets"
 
-    public init(service: String = "com.bolandcompany.satchel.local-secrets") {
+    public init(
+        service: String = "com.bolandcompany.orangebubbles.local-secrets",
+        legacyService: String? = "com.bolandcompany.satchel.local-secrets"
+    ) {
         self.service = service
+        self.legacyService = legacyService
     }
 
     public func load() -> WalletSecrets? {
+        if let secrets = load(service: service) { return secrets }
+        if let legacyService, let secrets = load(service: legacyService) {
+            save(secrets) // re-home under the new service
+            return secrets
+        }
+        return nil
+    }
+
+    private func load(service: String) -> WalletSecrets? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,

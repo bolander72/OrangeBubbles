@@ -35,7 +35,7 @@ targets:
       - target: WalletWidget
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.satchel
+        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.orangebubbles
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
     info:
       path: HostApp/Info.plist
@@ -57,16 +57,20 @@ targets:
       path: HostApp/OrangeBubbles.entitlements
       properties:
         com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.bolandcompany.orangebubbles
           - iCloud.com.bolandcompany.satchel
         com.apple.developer.ubiquity-container-identifiers:
+          - iCloud.com.bolandcompany.orangebubbles
           - iCloud.com.bolandcompany.satchel
         com.apple.developer.icloud-services:
           - CloudDocuments
         com.apple.developer.associated-domains:
           - webcredentials:wallet.taprootwizards.com
         com.apple.security.application-groups:
-          - group.com.bolandcompany.satchel
+          - group.com.bolandcompany.orangebubbles
         keychain-access-groups:
+          - $(AppIdentifierPrefix)com.bolandcompany.orangebubbles.shared
+          # Legacy group: pre-rename wallets' keys live here (reads only).
           - $(AppIdentifierPrefix)com.bolandcompany.satchel.shared
 
   MessagesExtension:
@@ -79,7 +83,7 @@ targets:
       - package: WalletKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.satchel.MessagesExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.orangebubbles.MessagesExtension
         PRODUCT_NAME: OrangeBubbles
         # Distinct module name: the host app target is also named OrangeBubbles.
         PRODUCT_MODULE_NAME: OrangeBubblesMessages
@@ -101,16 +105,20 @@ targets:
       path: MessagesExtension/MessagesExtension.entitlements
       properties:
         com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.bolandcompany.orangebubbles
           - iCloud.com.bolandcompany.satchel
         com.apple.developer.ubiquity-container-identifiers:
+          - iCloud.com.bolandcompany.orangebubbles
           - iCloud.com.bolandcompany.satchel
         com.apple.developer.icloud-services:
           - CloudDocuments
         com.apple.developer.associated-domains:
           - webcredentials:wallet.taprootwizards.com
         com.apple.security.application-groups:
-          - group.com.bolandcompany.satchel
+          - group.com.bolandcompany.orangebubbles
         keychain-access-groups:
+          - $(AppIdentifierPrefix)com.bolandcompany.orangebubbles.shared
+          # Legacy group: pre-rename wallets' keys live here (reads only).
           - $(AppIdentifierPrefix)com.bolandcompany.satchel.shared
 
   WalletWidget:
@@ -121,7 +129,7 @@ targets:
       - Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.satchel.WalletWidget
+        PRODUCT_BUNDLE_IDENTIFIER: com.bolandcompany.orangebubbles.WalletWidget
     info:
       path: WalletWidget/Info.plist
       properties:
@@ -132,4 +140,4 @@ targets:
       path: WalletWidget/WalletWidget.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.bolandcompany.satchel
+          - group.com.bolandcompany.orangebubbles

@@ -13,7 +13,7 @@ struct WalletWidgetBundle: WidgetBundle {
 
 struct WalletWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "SatchelBalance" /* frozen: placed widgets key on this */, provider: SnapshotProvider()) { entry in
+        StaticConfiguration(kind: "OrangeBubblesBalance", provider: SnapshotProvider()) { entry in
             WalletWidgetView(entry: entry)
                 .containerBackground(for: .widget) { Color(.systemBackground) }
         }

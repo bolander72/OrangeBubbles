@@ -33,13 +33,17 @@ public struct SyncedKeychainKeyProvider: BackupKeyProvider {
     public let identifier = "synced-keychain"
 
     private let service: String
+    /// Pre-rename wallets stored their key under this service; read-only.
+    private let legacyService: String?
     private let account: String
 
     public init(
-        service: String = "com.bolandcompany.satchel.backup-key",
+        service: String = "com.bolandcompany.orangebubbles.backup-key",
+        legacyService: String? = "com.bolandcompany.satchel.backup-key",
         account: String = "primary"
     ) {
         self.service = service
+        self.legacyService = legacyService
         self.account = account
     }
 
@@ -85,6 +89,19 @@ public struct SyncedKeychainKeyProvider: BackupKeyProvider {
     }
 
     public func existingKeyMaterial() async throws -> Data? {
+        if let data = try read(service: service) {
+            return data
+        }
+        // Legacy fallback: a pre-rename wallet's key. Found keys keep
+        // working from their old home; new keys are created under the
+        // new service.
+        if let legacyService, let data = try read(service: legacyService) {
+            return data
+        }
+        return nil
+    }
+
+    private func read(service: String) throws -> Data? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,

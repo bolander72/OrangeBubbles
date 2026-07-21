@@ -29,7 +29,7 @@ struct SharedSnapshot: Codable {
     var usdPerBTC: Double?
     var updatedAt: Date
 
-    static let appGroupID = "group.com.bolandcompany.satchel"
+    static let appGroupID = "group.com.bolandcompany.orangebubbles"
     private static let fileName = "wallet-snapshot.json"
 
     private static var fileURL: URL? {
