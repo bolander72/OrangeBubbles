@@ -111,7 +111,19 @@ consensus. OrangeBubbles side is ~70% reusable from gift machinery.
 **Trigger to build:** MagicPay team commits to their side (native PRF
 assertion + AASA entry); build OB side behind a debug flag first.
 
-## 9. Multi-device same-wallet writes — accepted behavior
+## 9. Privacy ladder
+
+Posture and sequencing decided in
+[ADR 0007](decisions/0007-privacy-posture.md): Tier 1 network privacy
+(own-node endpoint, Tor evaluation, change hygiene) → BIP352 silent
+payments → PayJoin. Mixing rejected permanently (legal); "ZK payments"
+don't exist on Bitcoin; ecash parked as a deliberate philosophical
+question.
+
+**Trigger to build:** Tier 1 alongside the next infrastructure pass;
+BIP352 when light-client indexes mature.
+
+## 10. Multi-device same-wallet writes — accepted behavior
 
 Two iPhones on one Apple ID can both unlock the wallet and race the backup
 reseal (last writer wins; `NSFileCoordinator` prevents torn writes; the
