@@ -1,3 +1,4 @@
+import BitcoinDevKit
 import Foundation
 import XCTest
 
@@ -108,6 +109,30 @@ final class PaymentRequestTests: XCTestCase {
             PaymentRequest.parse("bitcoin:tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx?amount=1")?.amountSats,
             100_000_000
         )
+    }
+}
+
+final class SeedEntropyTests: XCTestCase {
+    /// The canonical BIP39 vector: 16 zero bytes must yield the known
+    /// mnemonic. Proves the entropy → words encoding path is faithful.
+    func testKnownBip39VectorEncodesCorrectly() throws {
+        let mnemonic = try Mnemonic.fromEntropy(entropy: [UInt8](repeating: 0, count: 16))
+        XCTAssertEqual(
+            mnemonic.description,
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+        )
+    }
+
+    func testGenerateLengthAndUniqueness() throws {
+        let a = try SeedEntropy.generate(byteCount: 32)
+        let b = try SeedEntropy.generate(byteCount: 32)
+        XCTAssertEqual(a.count, 32)
+        XCTAssertEqual(b.count, 32)
+        XCTAssertNotEqual(a, b)
+        XCTAssertNotEqual(a, Data(count: 32), "must never be all zeros")
+
+        let c = try SeedEntropy.generate(byteCount: 16)
+        XCTAssertEqual(c.count, 16)
     }
 }
 
@@ -326,14 +351,19 @@ final class WalletEngineTests: XCTestCase {
             .appendingPathComponent("walletkit-tests-\(UUID().uuidString)", isDirectory: true)
     }
 
-    func testGenerateProducesTwelveWords() {
-        let secrets = WalletEngine.generateSecrets(network: .signet)
-        XCTAssertEqual(secrets.mnemonic.split(separator: " ").count, 12)
+    func testGenerateProducesTwentyFourWords() throws {
+        let secrets = try WalletEngine.generateSecrets(network: .signet)
+        XCTAssertEqual(secrets.mnemonic.split(separator: " ").count, 24, "main wallets are 256-bit")
         XCTAssertEqual(secrets.scriptType, .bip84)
     }
 
+    func testGiftStrengthProducesTwelveWords() throws {
+        let secrets = try WalletEngine.generateSecrets(network: .signet, strength: .standard)
+        XCTAssertEqual(secrets.mnemonic.split(separator: " ").count, 12)
+    }
+
     func testDeterministicRestoreYieldsSameAddresses() throws {
-        let secrets = WalletEngine.generateSecrets(network: .signet)
+        let secrets = try WalletEngine.generateSecrets(network: .signet)
 
         let engineA = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
         let a0 = try engineA.nextReceiveAddress()
@@ -351,7 +381,7 @@ final class WalletEngineTests: XCTestCase {
     }
 
     func testRestoreHintRevealsAddressesUpfront() throws {
-        var secrets = WalletEngine.generateSecrets(network: .signet)
+        var secrets = try WalletEngine.generateSecrets(network: .signet)
         secrets.receiveIndexHint = 5
 
         let engine = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
@@ -361,7 +391,7 @@ final class WalletEngineTests: XCTestCase {
 
     func testAddressValidation() throws {
         let engine = try WalletEngine(
-            secrets: WalletEngine.generateSecrets(network: .bitcoin),
+            secrets: try WalletEngine.generateSecrets(network: .bitcoin),
             storageDirectory: tempDir()
         )
         XCTAssertTrue(engine.validateAddress("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"))
@@ -371,7 +401,7 @@ final class WalletEngineTests: XCTestCase {
 
     func testBip86ProducesTaprootAddresses() throws {
         let secrets = WalletSecrets(
-            mnemonic: WalletEngine.generateSecrets(network: .bitcoin).mnemonic,
+            mnemonic: try WalletEngine.generateSecrets(network: .bitcoin).mnemonic,
             network: .bitcoin,
             scriptType: .bip86
         )

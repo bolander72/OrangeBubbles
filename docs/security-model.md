@@ -10,6 +10,16 @@ The BIP39 mnemonic. Whoever has it has the money. It exists:
 It is **never** shown to the user (no seed phrase ceremony), never logged,
 never sent to any Taproot Wizards server, and never stored unencrypted at rest.
 
+## Seed generation (hardened 2026-08 after the Coldcard RNG incident)
+
+Seeds are never drawn from a single library's internal RNG. `SeedEntropy`
+combines three sources with HKDF-SHA256 — Apple's kernel CSPRNG
+(`SecRandomCopyBytes`, mandatory, fail-closed), a CryptoKit path into the
+system RNG, and BitcoinDevKit's Rust RNG (mixed in, not trusted) — so a
+silently broken path in any one of them cannot produce predictable seeds.
+Main wallets use 24 words (256-bit entropy); disposable gift vouchers use
+12 words (128-bit). The encode path is pinned by a BIP39 test vector.
+
 ## Encryption path
 
 - AEAD: ChaCha20-Poly1305 (CryptoKit).

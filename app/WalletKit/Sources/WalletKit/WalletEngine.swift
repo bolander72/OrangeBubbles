@@ -17,11 +17,29 @@ public final class WalletEngine: @unchecked Sendable {
 
     // MARK: - Creation
 
+    public enum SeedStrength {
+        /// 24 words / 256-bit — main wallets.
+        case high
+        /// 12 words / 128-bit — disposable gift vouchers (URL-sized).
+        case standard
+
+        var entropyBytes: Int {
+            switch self {
+            case .high: return 32
+            case .standard: return 16
+            }
+        }
+    }
+
+    /// Seeds come from SeedEntropy (multi-source, fail-closed) — never
+    /// from any single library's internal RNG. See SeedEntropy.swift.
     public static func generateSecrets(
         network: NetworkKind,
-        scriptType: ScriptType = .bip84
-    ) -> WalletSecrets {
-        let mnemonic = Mnemonic(wordCount: .words12)
+        scriptType: ScriptType = .bip84,
+        strength: SeedStrength = .high
+    ) throws -> WalletSecrets {
+        let entropy = try SeedEntropy.generate(byteCount: strength.entropyBytes)
+        let mnemonic = try Mnemonic.fromEntropy(entropy: [UInt8](entropy))
         return WalletSecrets(
             mnemonic: mnemonic.description,
             network: network,

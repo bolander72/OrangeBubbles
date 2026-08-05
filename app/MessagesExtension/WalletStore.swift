@@ -145,7 +145,7 @@ final class WalletStore: ObservableObject {
                 // in Settings (its registration sheet can't be silent).
                 let material = try await keychainProvider.keyMaterial()
                 sessionKey = (material, keychainProvider.identifier)
-                let fresh = WalletEngine.generateSecrets(network: chain.network)
+                let fresh = try WalletEngine.generateSecrets(network: chain.network)
                 try await bootEngine(with: fresh)
                 try await persistBackup()
                 localSecrets.save(fresh)

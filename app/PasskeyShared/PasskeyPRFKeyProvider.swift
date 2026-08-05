@@ -134,7 +134,8 @@ final class PasskeyPRFKeyProvider: NSObject, BackupKeyProvider, @unchecked Senda
 
     private static func randomBytes(_ count: Int) -> Data {
         var bytes = Data(count: count)
-        _ = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!) }
+        let status = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!) }
+        precondition(status == errSecSuccess, "secure random unavailable")
         return bytes
     }
 }

@@ -29,7 +29,7 @@ public struct ClaimVoucher: Codable, Equatable, Sendable, Identifiable {
         lifetime: TimeInterval = defaultLifetime
     ) throws -> ClaimVoucher {
         guard amountSats >= minimumSats else { throw WalletKitError.amountBelowDust }
-        let secrets = WalletEngine.generateSecrets(network: network)
+        let secrets = try WalletEngine.generateSecrets(network: network, strength: .standard)
         let address = try firstAddress(mnemonic: secrets.mnemonic, network: network)
         return ClaimVoucher(
             mnemonic: secrets.mnemonic,
@@ -108,7 +108,7 @@ extension ClaimVoucher {
         }
         guard
             let mnemonic = value("m"),
-            mnemonic.split(separator: " ").count == 12,
+            [12, 24].contains(mnemonic.split(separator: " ").count),
             let satsText = value("sats"), let sats = UInt64(satsText),
             let netText = value("net"), let network = NetworkKind(rawValue: netText),
             let address = try? Self.firstAddress(mnemonic: mnemonic, network: network)
