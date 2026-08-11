@@ -32,25 +32,55 @@ struct SharedSnapshot: Codable {
     static let appGroupID = "group.com.bolandcompany.orangebubbles"
     private static let fileName = "wallet-snapshot.json"
 
+    /// Written under Library/Application Support: on real devices the
+    /// group container's ROOT is not reliably writable (the simulator is
+    /// lax about it, which hid this) — the original root-level write
+    /// silently failed on hardware, starving the widget and Siri.
     private static var fileURL: URL? {
+        guard let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
+        else { return nil }
+        let dir = container
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent(fileName)
+    }
+
+    /// Pre-fix location (container root) — read fallback for one
+    /// transition so an un-upgraded writer's data still surfaces.
+    private static var legacyFileURL: URL? {
         FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
             .appendingPathComponent(fileName)
     }
 
     static func load() -> SharedSnapshot? {
-        guard let url = fileURL, let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(SharedSnapshot.self, from: data)
+        for url in [fileURL, legacyFileURL].compactMap({ $0 }) {
+            if let data = try? Data(contentsOf: url),
+               let snapshot = try? decoder.decode(SharedSnapshot.self, from: data) {
+                return snapshot
+            }
+        }
+        return nil
     }
 
     func save() {
-        guard let url = Self.fileURL else { return }
+        guard let url = Self.fileURL else {
+            NSLog("SharedSnapshot: app group container unavailable")
+            return
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(self) else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            let data = try encoder.encode(self)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            // Loud, not silent — this exact failure hid for weeks.
+            NSLog("SharedSnapshot: write failed: \(error)")
+        }
     }
 
     // MARK: - Display helpers (shared by widget + intents)

@@ -210,6 +210,14 @@ final class WalletStore: ObservableObject {
         transactions = engine.transactions()
         feeTiers = await feeEstimator.tiers(esploraURL: chain.esploraURL, feesURL: chain.feesURL)
         usdPerBTC = await priceOracle.usdPerBTC() ?? usdPerBTC
+
+        // Keep the handed-out (Siri/widget) addresses revealed & backed
+        // up — before publishing, so the snapshot is never stale.
+        let before = engine.revealedIndexes().receive
+        upcomingAddresses = (try? await Self.offMain { try engine.revealUpcomingReceiveAddresses(count: 3) }) ?? []
+        if engine.revealedIndexes().receive != before {
+            try? await persistBackup()
+        }
         publishSnapshot()
 
         // Money arriving while you watch deserves a buzz.
@@ -217,13 +225,6 @@ final class WalletStore: ObservableObject {
             Haptics.success()
         }
         hasLoadedOnce = true
-
-        // Keep the handed-out (Siri/widget) addresses revealed & backed up.
-        let before = engine.revealedIndexes().receive
-        upcomingAddresses = (try? await Self.offMain { try engine.revealUpcomingReceiveAddresses(count: 3) }) ?? []
-        if engine.revealedIndexes().receive != before {
-            try? await persistBackup()
-        }
     }
 
     /// Snapshot-published addresses; revealed so sync watches them.

@@ -132,9 +132,10 @@ but the file never appears; `try? data.write` swallows the error.
 Impact is confined to widget/Siri showing no data on device; wallet,
 sends, gifts, and backups are unaffected.
 
-**Trigger to fix:** when the widget/Siri actually matter (Mike currently
-doesn't care) — or fold into deleting the widget/Siri/snapshot layer if
-the standalone-app simplification ever wins.
+**Fixed 2026-08:** the group container ROOT isn't writable on real
+devices (simulator is lax, hiding it). Snapshot now lives under
+Library/Application Support with a legacy-root read fallback, and write
+failures log instead of vanishing into `try?`.
 
 ## 11. Multi-device same-wallet writes — accepted behavior
 
