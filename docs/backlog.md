@@ -137,7 +137,17 @@ devices (simulator is lax, hiding it). Snapshot now lives under
 Library/Application Support with a legacy-root read fallback, and write
 failures log instead of vanishing into `try?`.
 
-## 11. Multi-device same-wallet writes — accepted behavior
+## 11. Shared Vaults (group-chat multisig)
+
+Fully specced in [ADR 0008](decisions/0008-shared-vaults.md): k-of-n
+"shared accounts" native to iMessage group chats — P2WSH v1 now,
+FROST v2 behind an explicit readiness gate (audited implementation,
+reviewed nonce state machine, DKG-over-cards spec). The single biggest
+feature on the board; likely OrangeBubbles' defining capability.
+
+**Trigger to build:** Mike's go on the P2WSH-first sequencing.
+
+## 12. Multi-device same-wallet writes — accepted behavior
 
 Two iPhones on one Apple ID can both unlock the wallet and race the backup
 reseal (last writer wins; `NSFileCoordinator` prevents torn writes; the
