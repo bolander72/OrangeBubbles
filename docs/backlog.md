@@ -123,7 +123,20 @@ question.
 **Trigger to build:** Tier 1 alongside the next infrastructure pass;
 BIP352 when light-client indexes mature.
 
-## 10. Multi-device same-wallet writes — accepted behavior
+## 10. Device-only bug: shared snapshot never writes on real hardware
+
+`wallet-snapshot.json` (the watch-only App Group bridge feeding the
+widget and Siri intents) writes fine on the simulator but silently
+fails on a physical iPhone — the container exists (group defaults work)
+but the file never appears; `try? data.write` swallows the error.
+Impact is confined to widget/Siri showing no data on device; wallet,
+sends, gifts, and backups are unaffected.
+
+**Trigger to fix:** when the widget/Siri actually matter (Mike currently
+doesn't care) — or fold into deleting the widget/Siri/snapshot layer if
+the standalone-app simplification ever wins.
+
+## 11. Multi-device same-wallet writes — accepted behavior
 
 Two iPhones on one Apple ID can both unlock the wallet and race the backup
 reseal (last writer wins; `NSFileCoordinator` prevents torn writes; the

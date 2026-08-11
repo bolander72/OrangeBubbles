@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var showReceive = false
     @State private var showSend = false
     @State private var showSettings = false
+    @AppStorage("passkeyNudgeDismissed.v1") private var passkeyNudgeDismissed = false
     @State private var speedingUp = false
 
     var body: some View {
@@ -42,6 +43,45 @@ struct HomeView: View {
                     systemName: "icloud.slash.fill",
                     text: "Heads up: iCloud isn't reachable, so this wallet is only backed up on this device for now.",
                     tint: .blue
+                )
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+            }
+
+            // Passkey sealing can't be the silent default (registration
+            // always shows a system sheet, in the host app) — so it
+            // advertises itself until done or dismissed. ADR 0002/0004.
+            if store.canUpgradeToPasskey, !passkeyNudgeDismissed, !bridge.isCompact {
+                HStack(spacing: 10) {
+                    IconBubble(systemName: "person.badge.key.fill", tint: .green, size: 32)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Harden your backup")
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        Text("One Face ID makes it passkey-sealed.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Upgrade") {
+                        bridge.openHostApp("upgrade")
+                    }
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    Button {
+                        passkeyNudgeDismissed = true
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color(.tertiaryLabel))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
                 )
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
