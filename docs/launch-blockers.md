@@ -60,8 +60,8 @@ requirement, no user data:
 | Path | Purpose |
 | --- | --- |
 | `/.well-known/apple-app-site-association` | Passkey (PRF) domain association — the file that activates ADR 0002's end-state encryption. JSON with `webcredentials.apps = ["<TEAMID>.com.bolandcompany.orangebubbles.MessagesExtension"]`. Must be served as `application/json`, no redirect. |
-| `/pay` and `/paid` | Card-URL fallback. Every payment card carries `https://www.boland.co/pay?address=…&sats=…`. On Android/desktop/forwarded contexts that's currently a dead link. A static page (client-side JS reads the query string) should render the amount, address, QR / `bitcoin:` URI, and an App Store link. No data leaves the page. |
-| `/privacy` | Item 2. |
+| `/pay`, `/paid`, `/claim` | Card-URL fallback — ✅ **written and verified**, in `site/` awaiting upload: client-side-only pages rendering amount/address/`bitcoin:` URI (pay), receipt + explorer link (paid), and claim instructions with the gift secret deliberately never rendered (claim). Zero external requests, no-referrer, noindex. |
+| `/privacy` | ✅ written (`site/privacy/`) — truthful no-collection policy; contact address is hello@boland.co, adjust if wrong. |
 
 After the AASA file is live and the app runs on a real signed device,
 do the **two-iPhone PRF validation** from ADR 0002 before trusting

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Bitcoin payment sent — OrangeBubbles</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { margin:0; box-sizing:border-box; }
+  body { font: 17px/1.5 -apple-system, system-ui, sans-serif;
+         display:flex; min-height:100vh; align-items:center; justify-content:center;
+         background:#fff; color:#111; padding:24px; }
+  @media (prefers-color-scheme: dark) { body { background:#0d0d0f; color:#f2f2f2; } }
+  .card { max-width:420px; width:100%; text-align:center; }
+  .mark { width:72px; height:72px; border-radius:50%;
+          background:linear-gradient(135deg,#21ad61,#0d8547);
+          display:flex; align-items:center; justify-content:center;
+          font-size:34px; color:#fff; margin:0 auto 18px; }
+  h1 { font-size:22px; margin-bottom:6px; }
+  .amount { font-size:34px; font-weight:800; margin:10px 0 2px; color:#21ad61; }
+  .sub { opacity:.6; font-size:14px; margin-bottom:18px; }
+  .btn { display:block; width:100%; padding:14px; border-radius:14px;
+         font-size:17px; font-weight:600; text-decoration:none; margin-top:10px;
+         background:rgba(33,173,97,.14); color:#0d8547; }
+  .foot { margin-top:22px; font-size:12px; opacity:.5; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="mark">✓</div>
+  <h1>Bitcoin payment sent</h1>
+  <div id="content"><p class="sub">This receipt link is missing its details.</p></div>
+  <p class="foot">Sent with OrangeBubbles — bitcoin inside iMessage.<br>
+  This page renders entirely in your browser.</p>
+</div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var sats = parseInt(q.get("sats") || "0", 10);
+  var txid = q.get("txid");
+  var el = document.getElementById("content");
+  var html = "";
+  if (sats > 0) {
+    html += '<div class="amount">' + sats.toLocaleString() + ' sats</div>' +
+            '<div class="sub">' + (sats / 1e8).toFixed(8) + ' BTC</div>';
+  }
+  if (txid && /^[0-9a-f]{64}$/i.test(txid)) {
+    // The explorer link is the one intentional exit from this page —
+    // it only fires if the viewer taps it.
+    html += '<a class="btn" rel="noreferrer" href="https://mempool.space/tx/' + txid + '">View on mempool.space</a>';
+  }
+  if (html) el.innerHTML = html;
+})();
+</script>
+</body>
+</html>

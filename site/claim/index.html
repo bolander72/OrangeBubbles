@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>You've been sent bitcoin — OrangeBubbles</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { margin:0; box-sizing:border-box; }
+  body { font: 17px/1.5 -apple-system, system-ui, sans-serif;
+         display:flex; min-height:100vh; align-items:center; justify-content:center;
+         background:#fff; color:#111; padding:24px; }
+  @media (prefers-color-scheme: dark) { body { background:#0d0d0f; color:#f2f2f2; } }
+  .card { max-width:420px; width:100%; text-align:center; }
+  .mark { width:72px; height:72px; border-radius:50%;
+          background:linear-gradient(135deg,#8f45e6,#5c21b5);
+          display:flex; align-items:center; justify-content:center;
+          font-size:34px; color:#fff; margin:0 auto 18px; }
+  h1 { font-size:22px; margin-bottom:6px; }
+  .amount { font-size:34px; font-weight:800; margin:10px 0 2px; color:#8f45e6; }
+  .sub { opacity:.6; font-size:14px; margin-bottom:18px; }
+  .warn { font-size:13px; background:rgba(230,90,60,.12); color:#c2401f;
+          border-radius:12px; padding:12px; margin-top:16px; text-align:left; }
+  @media (prefers-color-scheme: dark) { .warn { color:#ff8a65; } }
+  .steps { text-align:left; font-size:15px; margin:14px 0 0; padding-left:20px; }
+  .steps li { margin-bottom:6px; }
+  .foot { margin-top:22px; font-size:12px; opacity:.5; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="mark">🎁</div>
+  <h1>Someone sent you bitcoin</h1>
+  <div id="amount"></div>
+  <ol class="steps">
+    <li>On an iPhone, open this conversation in <strong>Messages</strong>.</li>
+    <li>Get <strong>OrangeBubbles</strong> from the App Store if you don't have it.</li>
+    <li>Tap the gift card in the chat — the bitcoin is yours in one tap.</li>
+  </ol>
+  <div class="warn"><strong>Keep this link private.</strong> Anyone who has it can
+  claim the gift — it works like cash. Don't forward it or post it anywhere.</div>
+  <p class="foot">Sent with OrangeBubbles — bitcoin inside iMessage.<br>
+  This page renders entirely in your browser; the gift's secret is never
+  displayed, stored, or transmitted by this site.</p>
+</div>
+<script>
+(function () {
+  // Deliberately parse ONLY the amount. The claim secret (m=) stays in
+  // the URL, untouched and unrendered.
+  var q = new URLSearchParams(location.search);
+  var sats = parseInt(q.get("sats") || "0", 10);
+  if (sats > 0) {
+    document.getElementById("amount").innerHTML =
+      '<div class="amount">' + sats.toLocaleString() + ' sats</div>' +
+      '<div class="sub">' + (sats / 1e8).toFixed(8) + ' BTC, waiting to be claimed</div>';
+  }
+})();
+</script>
+</body>
+</html>
