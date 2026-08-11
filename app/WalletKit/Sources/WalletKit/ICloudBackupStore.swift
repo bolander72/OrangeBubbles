@@ -112,6 +112,20 @@ public struct ICloudBackupStore: Sendable {
         return !fileManager.fileExists(atPath: icloud.path) && !fileManager.isUbiquitousItem(at: icloud)
     }
 
+    /// Removes every stored envelope (main + previous, iCloud + local
+    /// fallback). Dev tooling for wallet resets; irreversible.
+    public func eraseAll() {
+        var targets: [URL] = []
+        if let icloud = icloudURL() {
+            targets += [icloud, previousURL(for: icloud)]
+        }
+        let fallback = fallbackURL()
+        targets += [fallback, previousURL(for: fallback)]
+        for url in targets {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+
     // MARK: - Internals
 
     private func previousURL(for url: URL) -> URL {

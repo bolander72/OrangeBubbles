@@ -12,6 +12,7 @@ struct SettingsView: View {
     #if DEBUG
         @State private var showClaimLinkPrompt = false
         @State private var passkeyProbeResult: String?
+        @State private var showWipeConfirm = false
         @State private var claimLinkText = ""
         @State private var debugVoucher: ClaimVoucher?
     #endif
@@ -175,6 +176,27 @@ struct SettingsView: View {
                     showClaimLinkPrompt = true
                 } label: {
                     Label("Open a claim link…", systemImage: "link")
+                }
+
+                Button(role: .destructive) {
+                    showWipeConfirm = true
+                } label: {
+                    Label("Wipe wallet & start fresh", systemImage: "trash")
+                }
+                .confirmationDialog(
+                    "Erase this wallet everywhere?",
+                    isPresented: $showWipeConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Erase and create a new wallet", role: .destructive) {
+                        Task {
+                            await store.debugWipeAndRecreate()
+                            dismiss()
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Deletes the local wallet, its iCloud backups, and the gift ledger. Remaining funds are orphaned — sweep them first if you care. A fresh 24-word wallet is created immediately.")
                 }
                 Text("Paste a gift card's URL (long-press the bubble → Copy) to act as the recipient on this device. Debug builds only — real recipients just tap the card.")
                     .font(.caption)

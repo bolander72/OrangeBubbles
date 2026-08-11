@@ -497,6 +497,30 @@ final class WalletStore: ObservableObject {
         objectWillChange.send() // backupKeyProviderName reads group defaults
     }
 
+    #if DEBUG
+        /// Dev-only: erase every trace of the current wallet (local cache,
+        /// iCloud envelopes, provider flag, gift ledger, chain cache) and
+        /// auto-create a fresh one. The synced keychain key and any passkey
+        /// are kept — they're reusable key material, not wallet identity.
+        func debugWipeAndRecreate() async {
+            phase = .working("Wiping wallet…")
+            engine = nil
+            secrets = nil
+            sessionKey = nil
+            localSecrets.clear()
+            let store = backupStore
+            _ = try? await Self.offMain { store.eraseAll() }
+            knownBackupProvider = nil
+            outstandingGifts = []
+            saveGifts()
+            try? FileManager.default.removeItem(at: Self.walletStorageDirectory())
+            balance = WalletBalance(confirmedSats: 0, pendingSats: 0)
+            transactions = []
+            hasLoadedOnce = false
+            await bootstrap()
+        }
+    #endif
+
     // MARK: - Backup
 
     /// Reseals the backup with current index hints. Called after wallet
