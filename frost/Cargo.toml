@@ -1,0 +1,10 @@
+[package]
+name = "ob-frost"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+frost-secp256k1-tr = "2"
+secp256k1 = { version = "0.29", features = ["rand", "std"] }
+rand = "0.8"
+hex = "0.4"
