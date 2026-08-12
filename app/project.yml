@@ -33,6 +33,7 @@ targets:
       - PasskeyShared
       - path: MessagesExtension/Vault/VaultTransport.swift
       - path: MessagesExtension/Vault/VaultCoordinator.swift
+      - path: MessagesExtension/Vault/VaultStore.swift
     dependencies:
       - target: MessagesExtension
       - target: WalletWidget

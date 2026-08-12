@@ -45,12 +45,39 @@ final class VaultCoordinator: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var seenMessageCount = 0
 
+    /// Called when DKG completes so the caller can persist the vault.
+    var onVaultReady: ((VaultRecord) -> Void)?
+
     init(config: Config, transport: VaultTransport, chain: ChainConfig, mnemonic: String) throws {
         self.config = config
         self.transport = transport
         self.chain = chain
         self.mnemonic = mnemonic
         self.identity = try FrostMemberIdentity(index: config.memberIndex, mnemonic: mnemonic)
+    }
+
+    /// Resume an already-established vault (no DKG): load key material and
+    /// go straight to ready, then poll for spend proposals.
+    init(resuming record: VaultRecord, transport: VaultTransport, chain: ChainConfig, mnemonic: String) throws {
+        self.config = Config(vaultID: record.vaultID, name: record.name,
+                             memberIndex: record.memberIndex, memberCount: record.memberCount,
+                             threshold: record.threshold, displayName: "Member \(record.memberIndex)")
+        self.transport = transport
+        self.chain = chain
+        self.mnemonic = mnemonic
+        self.identity = try FrostMemberIdentity(index: record.memberIndex, mnemonic: mnemonic)
+        self.vaultKeyHex = record.vaultXonlyHex
+        self.publicKeyPackage = record.publicKeyPackage
+        self.keyPackage = record.keyPackage
+        self.vaultAddress = record.address
+        self.stage = .ready
+    }
+
+    /// Start participating for a resumed vault: begin polling for proposals.
+    func resume() async {
+        note("Resumed vault ✓ \(config.threshold) of \(config.memberCount)")
+        startPolling()
+        await refreshBalance()
     }
 
     // MARK: - DKG
@@ -90,11 +117,14 @@ final class VaultCoordinator: ObservableObject {
                 if done { try finishDKG() }
             case .spendProposal:
                 let p: Proposal = try decode(payload)
+                resetSpendState()
                 pendingProposal = p
                 note("Spend proposed: \(Self.sats(p.amountSats)) sats to \(Self.short(p.destination))")
                 if autoApprove { await approve(p) }
             case .spendCommit:
                 try await collectCommit(decode(payload))
+            case .spendSigningSet:
+                try await receiveSigningSet(decode(payload))
             case .spendPartial:
                 try await collectPartial(decode(payload))
             case .spendBroadcast:
@@ -117,18 +147,39 @@ final class VaultCoordinator: ObservableObject {
         publicKeyPackage = pub
         keyPackage = kp
         let engine = FrostVaultEngine(vaultXonlyHex: key, network: chain.network)
-        vaultAddress = try engine.address()
+        let addr = try engine.address()
+        vaultAddress = addr
         stage = .ready
         note("Vault ready ✓ key \(key.prefix(12))…")
+        onVaultReady?(VaultRecord(
+            vaultID: config.vaultID, name: config.name, memberIndex: config.memberIndex,
+            memberCount: config.memberCount, threshold: config.threshold,
+            keyPackage: kp, publicKeyPackage: pub, vaultXonlyHex: key, address: addr,
+            relayHost: nil, createdAt: Date()))
         Task { await refreshBalance() }
     }
 
-    // MARK: - Spend (proposer path)
+    // MARK: - Spend
+    //
+    // Correct FROST coordination (ADR 0008): every signer must sign
+    // against ONE canonical commitment set, and the aggregator must
+    // combine partials from exactly that set. So:
+    //   1. proposer posts the proposal; members commit nonces (round 1)
+    //      but DO NOT sign yet.
+    //   2. the proposer collects commits, freezes a canonical signer set
+    //      of exactly k members, and broadcasts it (indices + commitments).
+    //   3. only members in that set sign — against the exact commitments —
+    //      and post partials.
+    //   4. the proposer aggregates the k partials and broadcasts.
 
+    private var isProposer = false
     private var signing: FrostSigningSession?
     private var currentPlan: FrostVaultEngine.SpendPlan?
     private var commitsByIndex: [UInt16: [String]] = [:]
     private var partialsByIndex: [UInt16: [String]] = [:]
+    private var canonicalSigners: [UInt16]?
+    private var canonicalCommitments: [[UInt16: String]]?
+    private var didBroadcast = false
 
     struct Proposal: Codable, Equatable {
         let proposalID: String
@@ -143,6 +194,8 @@ final class VaultCoordinator: ObservableObject {
         guard let key = vaultKeyHex else { return }
         do {
             note("Building spend…")
+            resetSpendState()
+            isProposer = true
             let engine = FrostVaultEngine(vaultXonlyHex: key, network: chain.network)
             let plan = try await engine.planSpend(to: destination, amountSats: amountSats, feeSats: feeSats, esploraURL: chain.esploraURL)
             let proposal = Proposal(
@@ -150,17 +203,16 @@ final class VaultCoordinator: ObservableObject {
                 amountSats: amountSats ?? balanceSats, feeSats: feeSats,
                 unsignedTxHex: plan.unsignedTxHex, sighashes: plan.sighashes)
             currentPlan = plan
-            try await post(.spendProposal, encode(proposal))
             pendingProposal = proposal
-            await approve(proposal) // proposer signs too
+            try await post(.spendProposal, encode(proposal))
+            await approve(proposal) // proposer commits too
         } catch {
             note("⚠️ propose failed: \(error.localizedDescription)")
         }
     }
 
-    /// Any signer approves the pending proposal: commit, then (as commits
-    /// arrive) sign, and (as partials arrive, if we're the proposer)
-    /// aggregate + broadcast.
+    /// Commit nonces (round 1) for the proposal. Does NOT sign yet — signing
+    /// waits for the proposer's canonical signer set.
     func approve(_ proposal: Proposal) async {
         guard let kp = keyPackage else { return }
         do {
@@ -171,58 +223,86 @@ final class VaultCoordinator: ObservableObject {
             let commitments = try session.commitments()
             commitsByIndex[config.memberIndex] = commitments
             try await post(.spendCommit, ["proposalID": proposal.proposalID, "index": Int(config.memberIndex), "commitments": commitments])
-            note("Approved — committed nonces")
+            note("Committed nonces")
         } catch {
             note("⚠️ approve failed: \(error.localizedDescription)")
         }
     }
 
+    /// Proposer only: collect commits, then freeze + broadcast the set.
     private func collectCommit(_ payload: CommitMsg) async throws {
         commitsByIndex[payload.index] = payload.commitments
-        guard let proposal = pendingProposal, let session = signing,
+        guard isProposer, canonicalSigners == nil,
+              let proposal = pendingProposal,
               commitsByIndex.count >= Int(config.threshold) else { return }
-        // Enough commits: produce our partials.
+
+        let signers = Array(commitsByIndex.keys.sorted().prefix(Int(config.threshold)))
         let inputs = proposal.sighashes.count
-        var byInput: [[UInt16: String]] = Array(repeating: [:], count: inputs)
-        for (idx, comms) in commitsByIndex { for i in 0..<inputs { byInput[i][idx] = comms[i] } }
-        if session.partialsPerInput == nil {
-            let partials = try session.sign(commitmentsByInputByIndex: byInput)
-            partialsByIndex[config.memberIndex] = partials
-            try await post(.spendPartial, ["proposalID": proposal.proposalID, "index": Int(config.memberIndex), "partials": partials])
-            note("Signed partials")
-        }
+        var comm: [[UInt16: String]] = Array(repeating: [:], count: inputs)
+        for idx in signers { for i in 0..<inputs { comm[i][idx] = commitsByIndex[idx]![i] } }
+        canonicalSigners = signers
+        canonicalCommitments = comm
+        note("Signer set fixed: \(signers.map(String.init).joined(separator: ","))")
+        try await post(.spendSigningSet, [
+            "proposalID": proposal.proposalID,
+            "signers": signers.map(Int.init),
+            "commitments": comm.map { $0.reduce(into: [String: [String]]()) { $0[String($1.key)] = [$1.value] } },
+        ])
+        try await signIfChosen()
     }
 
+    /// Any member: on receiving the canonical set, sign if we're in it.
+    private func receiveSigningSet(_ msg: SigningSetMsg) async throws {
+        guard canonicalSigners == nil else { return }
+        canonicalSigners = msg.signers
+        var comm: [[UInt16: String]] = Array(repeating: [:], count: msg.commitments.count)
+        for (i, perInput) in msg.commitments.enumerated() {
+            for (k, v) in perInput { if let idx = UInt16(k), let c = v.first { comm[i][idx] = c } }
+        }
+        canonicalCommitments = comm
+        try await signIfChosen()
+    }
+
+    private func signIfChosen() async throws {
+        guard let signers = canonicalSigners, let comm = canonicalCommitments,
+              let proposal = pendingProposal, let session = signing,
+              signers.contains(config.memberIndex), session.partialsPerInput == nil else { return }
+        let partials = try session.sign(commitmentsByInputByIndex: comm)
+        partialsByIndex[config.memberIndex] = partials
+        try await post(.spendPartial, ["proposalID": proposal.proposalID, "index": Int(config.memberIndex), "partials": partials])
+        note("Signed ✓")
+    }
+
+    /// Proposer only: aggregate the canonical set's partials + broadcast.
     private func collectPartial(_ payload: PartialMsg) async throws {
         partialsByIndex[payload.index] = payload.partials
-        guard let proposal = pendingProposal, let key = vaultKeyHex, let pub = publicKeyPackage,
-              let plan = currentPlan, partialsByIndex.count >= Int(config.threshold) else { return }
-        // We have a threshold of partials — finalize (idempotent; only the
-        // instance holding the plan aggregates).
+        guard isProposer, !didBroadcast,
+              let proposal = pendingProposal, let key = vaultKeyHex, let pub = publicKeyPackage,
+              let plan = currentPlan, let signers = canonicalSigners, let comm = canonicalCommitments,
+              signers.allSatisfy({ partialsByIndex[$0] != nil }) else { return }
+        didBroadcast = true
         let inputs = proposal.sighashes.count
-        var commByInput: [[UInt16: String]] = Array(repeating: [:], count: inputs)
         var partByInput: [[UInt16: String]] = Array(repeating: [:], count: inputs)
-        let signerSet = Array(partialsByIndex.keys.prefix(Int(config.threshold)))
-        for idx in signerSet {
-            for i in 0..<inputs {
-                commByInput[i][idx] = commitsByIndex[idx]![i]
-                partByInput[i][idx] = partialsByIndex[idx]![i]
-            }
-        }
+        for idx in signers { for i in 0..<inputs { partByInput[i][idx] = partialsByIndex[idx]![i] } }
+        note("Aggregating \(signers.count) partials…")
         let sigs = try FrostAggregator.aggregate(
             publicKeyPackage: pub, sighashes: proposal.sighashes,
-            commitmentsByInputByIndex: commByInput, partialsByInputByIndex: partByInput)
+            commitmentsByInputByIndex: comm, partialsByInputByIndex: partByInput)
         let engine = FrostVaultEngine(vaultXonlyHex: key, network: chain.network)
-        let txid = try await engine.finalizeAndBroadcast(
-            plan: plan, signatures: sigs, esploraURL: chain.esploraURL)
+        let txid = try await engine.finalizeAndBroadcast(plan: plan, signatures: sigs, esploraURL: chain.esploraURL)
         try await post(.spendBroadcast, ["txid": txid])
         note("BROADCAST ✓ tx \(txid.prefix(12))…")
-        pendingProposal = nil
         await refreshBalance()
+    }
+
+    private func resetSpendState() {
+        signing = nil; currentPlan = nil; commitsByIndex = [:]; partialsByIndex = [:]
+        canonicalSigners = nil; canonicalCommitments = nil; didBroadcast = false; isProposer = false
     }
 
     struct CommitMsg: Codable { let proposalID: String; let index: UInt16; let commitments: [String] }
     struct PartialMsg: Codable { let proposalID: String; let index: UInt16; let partials: [String] }
+    struct SigningSetMsg: Codable { let proposalID: String; let signers: [UInt16]; let commitments: [[String: [String]]] }
 
     // MARK: - Chain
 

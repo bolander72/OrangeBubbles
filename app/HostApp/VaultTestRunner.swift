@@ -79,10 +79,19 @@ struct VaultTestRunnerView: View {
             // identity; derive a stable one per member index.
             let seed = (try? WalletEngine.deterministicMnemonic(from: "vaulttest-member-\(cfg.memberIndex)")) ?? ""
             let transport = DebugRelayTransport(baseURL: url)
-            guard let c = try? VaultCoordinator(config: cfg, transport: transport, chain: .signet, mnemonic: seed) else { return }
-            c.autoApprove = true  // headless members co-sign automatically
-            coordinator = c
-            await c.start()
+            let store = VaultStore()
+            if let existing = store.all().first(where: { $0.vaultID == cfg.vaultID && $0.memberIndex == cfg.memberIndex }) {
+                guard let c = try? VaultCoordinator(resuming: existing, transport: transport, chain: .signet, mnemonic: seed) else { return }
+                c.autoApprove = true
+                coordinator = c
+                await c.resume()
+            } else {
+                guard let c = try? VaultCoordinator(config: cfg, transport: transport, chain: .signet, mnemonic: seed) else { return }
+                c.autoApprove = true
+                c.onVaultReady = { store.save($0) }
+                coordinator = c
+                await c.start()
+            }
         }
     }
 }

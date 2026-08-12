@@ -41,6 +41,7 @@ enum VaultMessageKind: String {
     case dkgRound2
     case spendProposal
     case spendCommit    // a signer's commitments for a proposal
+    case spendSigningSet // proposer fixes the canonical signer set + commitments
     case spendPartial   // a signer's partial signatures
     case spendBroadcast // final txid
 }

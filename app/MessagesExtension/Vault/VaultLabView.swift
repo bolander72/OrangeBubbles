@@ -2,21 +2,27 @@ import SwiftUI
 import WalletKit
 
 /// DEBUG-only harness for the live multi-device FROST test (ADR 0008).
-/// Each device joins the same vault ID with a distinct member index and
-/// coordinates over the debug relay. Not shipped; the product flow will
-/// live in group-chat cards.
+/// Vaults now persist (VaultStore): once DKG completes, the vault is saved
+/// and reappears here — you can close the sheet, fund the address from your
+/// main wallet, and come back to the SAME vault to propose spends.
 struct VaultLabView: View {
     @ObservedObject var store: WalletStore
     @Environment(\.dismiss) private var dismiss
 
+    private let vaultStore = VaultStore()
+    @State private var saved: [VaultRecord] = []
+    @State private var coordinator: VaultCoordinator?
+
+    // New-vault form
     @State private var relayHost = "192.168.1.46"
     @State private var vaultID = "testvault"
-    @State private var memberIndex = 1
+    @State private var memberIndex = 3
     @State private var memberCount = 3
     @State private var threshold = 2
+
+    // Spend form
     @State private var destination = ""
     @State private var amountText = ""
-    @State private var coordinator: VaultCoordinator?
 
     var body: some View {
         NavigationStack {
@@ -24,46 +30,64 @@ struct VaultLabView: View {
                 if let c = coordinator {
                     liveSection(c)
                 } else {
-                    setupSection
+                    savedSection
+                    newVaultSection
                 }
             }
-            .navigationTitle("Vault Lab (FROST)")
+            .navigationTitle("Vaults (FROST)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                if coordinator != nil {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Back") { coordinator = nil; saved = vaultStore.all() }
+                    }
                 }
+            }
+            .onAppear { saved = vaultStore.all() }
+        }
+    }
+
+    // MARK: - Saved vaults (persisted — the fix for "it disappears")
+
+    private var savedSection: some View {
+        Section("Your vaults") {
+            if saved.isEmpty {
+                Text("No vaults yet. Create one below.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(saved) { record in
+                Button {
+                    resume(record)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(record.name).font(.body)
+                        Text("\(record.thresholdLabel) · \(String(record.address.prefix(16)))…")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .onDelete { idx in
+                idx.map { saved[$0].vaultID }.forEach(vaultStore.delete)
+                saved = vaultStore.all()
             }
         }
     }
 
-    private var setupSection: some View {
-        Group {
-            Section("Relay") {
-                TextField("Relay host (Mac LAN IP)", text: $relayHost)
-                    .keyboardType(.numbersAndPunctuation)
-                    .autocorrectionDisabled()
-                Text("Simulators can use 127.0.0.1; the phone uses the Mac's Wi-Fi IP.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("This device's role") {
-                TextField("Vault ID (same on all devices)", text: $vaultID)
-                    .autocorrectionDisabled()
-                Stepper("I am member \(memberIndex)", value: $memberIndex, in: 1...memberCount)
-                Stepper("Members (n): \(memberCount)", value: $memberCount, in: 2...5)
-                Stepper("Threshold (k): \(threshold)", value: $threshold, in: 1...memberCount)
-            }
-            Section {
-                Button {
-                    startCeremony()
-                } label: {
-                    Label("Join vault & run DKG", systemImage: "person.3.sequence.fill")
-                }
-            } footer: {
-                Text("Start the relay on the Mac first (python3 frost/relay/relay.py). Each device: same Vault ID, different member number, matching n and k.")
-            }
+    private var newVaultSection: some View {
+        Section("Create / join a vault") {
+            TextField("Relay host (Mac IP; sims use 127.0.0.1)", text: $relayHost)
+                .keyboardType(.numbersAndPunctuation).autocorrectionDisabled()
+            TextField("Vault ID (same on all devices)", text: $vaultID).autocorrectionDisabled()
+            Stepper("I am member \(memberIndex)", value: $memberIndex, in: 1...memberCount)
+            Stepper("Members (n): \(memberCount)", value: $memberCount, in: 2...5)
+            Stepper("Threshold (k): \(threshold)", value: $threshold, in: 1...memberCount)
+            Button {
+                startDKG()
+            } label: { Label("Join & run DKG", systemImage: "person.3.sequence.fill") }
         }
     }
+
+    // MARK: - Live vault
 
     private func liveSection(_ c: VaultCoordinator) -> some View {
         Group {
@@ -74,12 +98,15 @@ struct VaultLabView: View {
                         Text("Deposit address").font(.caption).foregroundStyle(.secondary)
                         Text(addr).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
                     }
-                    Button {
-                        UIPasteboard.general.string = addr
-                    } label: { Label("Copy deposit address", systemImage: "doc.on.doc") }
-                    LabeledContent("Balance", value: "\(Format.sats(c.balanceSats)) sats")
-                    Button { Task { await c.refreshBalance() } } label: {
-                        Label("Refresh balance", systemImage: "arrow.clockwise")
+                    Button { UIPasteboard.general.string = addr } label: {
+                        Label("Copy deposit address", systemImage: "doc.on.doc")
+                    }
+                    HStack {
+                        LabeledContent("Balance", value: "\(c.balanceSats) sats")
+                        Spacer()
+                        Button { Task { await c.refreshBalance() } } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
                     }
                 }
             }
@@ -101,11 +128,10 @@ struct VaultLabView: View {
 
             if let p = c.pendingProposal {
                 Section("Pending proposal") {
-                    LabeledContent("Amount", value: "\(Format.sats(p.amountSats)) sats")
-                    LabeledContent("To", value: Format.shortAddress(p.destination))
-                    Button {
-                        Task { await c.approve(p) }
-                    } label: { Label("Approve & sign", systemImage: "checkmark.seal.fill") }
+                    LabeledContent("Amount", value: "\(p.amountSats) sats")
+                    Button { Task { await c.approve(p) } } label: {
+                        Label("Approve & sign", systemImage: "checkmark.seal.fill")
+                    }
                 }
             }
 
@@ -121,25 +147,42 @@ struct VaultLabView: View {
         switch c.stage {
         case .idle: return AnyView(Text("Idle"))
         case .dkgInProgress(let s): return AnyView(Label("DKG: \(s)", systemImage: "hourglass").foregroundStyle(.orange))
-        case .ready: return AnyView(Label("Vault ready", systemImage: "checkmark.shield.fill").foregroundStyle(.green))
+        case .ready: return AnyView(Label("Ready", systemImage: "checkmark.shield.fill").foregroundStyle(.green))
         case .error(let e): return AnyView(Label(e, systemImage: "exclamationmark.triangle").foregroundStyle(.red))
         }
     }
 
-    private func startCeremony() {
-        guard let seed = store.debugMnemonic,
-              let url = URL(string: "http://\(relayHost):8781") else { return }
-        let transport = DebugRelayTransport(baseURL: url)
+    // MARK: - Actions
+
+    private func transport(host: String) -> VaultTransport? {
+        URL(string: "http://\(host):8781").map { DebugRelayTransport(baseURL: $0) }
+    }
+
+    private func startDKG() {
+        guard let seed = store.debugMnemonic, let t = transport(host: relayHost) else { return }
+        let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: memberIndex)
         let config = VaultCoordinator.Config(
             vaultID: vaultID, name: vaultID, memberIndex: UInt16(memberIndex),
             memberCount: UInt16(memberCount), threshold: UInt16(threshold),
             displayName: "Member \(memberIndex)")
-        // Each member needs a DISTINCT seed; derive a per-index one from the
-        // wallet seed so a single device can also play different members.
-        let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: memberIndex)
-        guard let c = try? VaultCoordinator(config: config, transport: transport, chain: store.chain, mnemonic: memberSeed) else { return }
+        guard let c = try? VaultCoordinator(config: config, transport: t, chain: store.chain, mnemonic: memberSeed) else { return }
+        var record: VaultRecord?
+        c.onVaultReady = { r in
+            var withHost = r; withHost.relayHost = relayHost
+            vaultStore.save(withHost); record = withHost
+        }
+        _ = record
         coordinator = c
         Task { await c.start() }
+    }
+
+    private func resume(_ record: VaultRecord) {
+        guard let seed = store.debugMnemonic,
+              let t = transport(host: record.relayHost ?? relayHost) else { return }
+        let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: Int(record.memberIndex))
+        guard let c = try? VaultCoordinator(resuming: record, transport: t, chain: store.chain, mnemonic: memberSeed) else { return }
+        coordinator = c
+        Task { await c.resume() }
     }
 }
 
