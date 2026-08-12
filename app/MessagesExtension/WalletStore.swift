@@ -198,11 +198,14 @@ final class WalletStore: ObservableObject {
         defer { isSyncing = false }
 
         do {
-            try await withEsploraFailover { esplora in
-                try await Self.offMain { try engine.sync(esploraURL: esplora, fullScan: fullScan) }
+            try await withTimeout(seconds: 25) {
+                try await self.withEsploraFailover { esplora in
+                    try await Self.offMain { try engine.sync(esploraURL: esplora, fullScan: fullScan) }
+                }
             }
         } catch {
-            // Sync failures are non-fatal: show cached state plus a notice.
+            // Sync failures/timeouts are non-fatal: show cached state. The
+            // isSyncing flag ALWAYS clears (defer), so the spinner can't wedge.
             report(error)
         }
         let previousTotal = balance.totalSats
@@ -579,6 +582,21 @@ final class WalletStore: ObservableObject {
     private static func walletStorageDirectory() -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Wallet", isDirectory: true)
+    }
+
+    /// Runs `op` but throws if it exceeds `seconds` — guarantees refresh()
+    /// completes so the syncing indicator never gets stuck on a hung call.
+    private func withTimeout<T: Sendable>(seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await op() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw WalletKitError.networkUnreachable
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
     }
 
     private nonisolated static func offMain<T: Sendable>(

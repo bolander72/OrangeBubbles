@@ -9,10 +9,18 @@ public struct PriceOracle: Sendable {
     private let session: URLSession
     private let url: URL
 
-    public init(url: URL = PriceOracle.defaultURL, session: URLSession = .shared) {
+    public init(url: URL = PriceOracle.defaultURL, session: URLSession? = nil) {
         self.url = url
-        self.session = session
+        self.session = session ?? PriceOracle.boundedSession
     }
+
+    static let boundedSession: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.timeoutIntervalForRequest = 12
+        c.timeoutIntervalForResource = 20
+        c.waitsForConnectivity = false
+        return URLSession(configuration: c)
+    }()
 
     /// Returns nil on any failure — fiat display simply hides.
     public func usdPerBTC() async -> Double? {
