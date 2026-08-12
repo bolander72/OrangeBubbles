@@ -3,12 +3,33 @@ name = "ob-frost"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "obfrost"
+crate-type = ["staticlib", "cdylib", "lib"]
+
 [dependencies]
-frost-secp256k1-tr = "2"
+frost-secp256k1-tr = { version = "2", features = ["serde"] }
 secp256k1 = { version = "0.29", features = ["rand", "std"] }
-bitcoin = { version = "0.32", features = ["rand-std"] }
 rand = "0.8"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ureq = { version = "2", features = ["json"] }
+uniffi = { version = "0.28", features = ["cli"] }
+thiserror = "2.0.20"
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/uniffi-bindgen.rs"
+
+# Both this lib and bdk-swift's libbdkffi statically bundle the Rust
+# runtime; panic=abort drops _rust_eh_personality so the two archives
+# don't collide on that symbol when linked together. (Tradeoff: a Rust
+# panic aborts rather than unwinding into a uniffi error — acceptable
+# for a crypto core with controlled inputs; revisit if it bites.)
+[profile.dev]
+panic = "abort"
+[profile.release]
+panic = "abort"

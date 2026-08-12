@@ -14,10 +14,19 @@ let package = Package(
         .package(url: "https://github.com/bitcoindevkit/bdk-swift", exact: "1.2.0")
     ],
     targets: [
+        .binaryTarget(
+            name: "OBFrostFFI",
+            path: "OBFrostFFI.xcframework"
+        ),
+        .target(
+            name: "OBFrost",
+            dependencies: ["OBFrostFFI"]
+        ),
         .target(
             name: "WalletKit",
             dependencies: [
-                .product(name: "BitcoinDevKit", package: "bdk-swift")
+                .product(name: "BitcoinDevKit", package: "bdk-swift"),
+                "OBFrost"
             ]
         ),
         .testTarget(
