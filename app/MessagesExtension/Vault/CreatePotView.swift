@@ -11,7 +11,6 @@ struct CreatePotView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
-    @State private var myName = ""
     @State private var people = 3
     @State private var rule: Rule = .any2
     @State private var coordinator: VaultCoordinator?
@@ -79,10 +78,6 @@ struct CreatePotView: View {
                 Text("Give it a name your group will recognize in the chat.")
             }
 
-            Section("Your name in this pot") {
-                TextField("e.g. Mike", text: $myName).font(.system(.body, design: .rounded))
-            }
-
             Section("How many people?") {
                 Stepper("\(people) people (including you)", value: $people, in: 2...5)
                     .onChange(of: people) { _, n in if rule == .any2 && n < 2 { rule = .everyone } }
@@ -144,7 +139,7 @@ struct CreatePotView: View {
             vaultID: id, name: name.trimmingCharacters(in: .whitespaces),
             memberIndex: UInt16(memberIndex), memberCount: UInt16(people),
             threshold: UInt16(threshold),
-            displayName: myName.trimmingCharacters(in: .whitespaces).isEmpty ? "Me" : myName.trimmingCharacters(in: .whitespaces))
+            displayName: "Me")
         let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: memberIndex)
         guard let c = try? VaultCoordinator(config: cfg, transport: DebugRelayTransport(baseURL: url),
                                             chain: store.chain, mnemonic: memberSeed) else { return }
