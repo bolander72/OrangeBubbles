@@ -260,6 +260,15 @@ private struct SpendSheet: View {
                     TextField("Bitcoin address", text: $destination, axis: .vertical)
                         .font(.system(.footnote, design: .monospaced))
                         .autocorrectionDisabled().textInputAutocapitalization(.never)
+                    Button {
+                        if let s = UIPasteboard.general.string {
+                            destination = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Haptics.tap()
+                        }
+                    } label: {
+                        Label("Paste address", systemImage: "doc.on.clipboard")
+                            .font(.system(.subheadline, design: .rounded))
+                    }
                     if !destination.isEmpty && !valid {
                         Text("That's not a valid address").font(.caption).foregroundStyle(.red)
                     }

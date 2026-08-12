@@ -61,7 +61,10 @@ struct PotsView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     ForEach(sortedForChat) { record in
-                        PotCard(record: record, inThisChat: record.chatKey != nil && record.chatKey == chatKey) { resume(record) }
+                        PotCard(record: record,
+                                inThisChat: record.chatKey != nil && record.chatKey == chatKey,
+                                onTap: { resume(record) },
+                                onDelete: { remove(record) })
                     }
                 }
                 Button {
@@ -99,6 +102,12 @@ struct PotsView: View {
 
     private func reload() { saved = vaultStore.all() }
 
+    private func remove(_ record: VaultRecord) {
+        vaultStore.delete(vaultID: record.vaultID)
+        Haptics.tap()
+        reload()
+    }
+
     private func resume(_ record: VaultRecord) {
         guard let seed = store.debugMnemonic,
               let url = URL(string: "http://\(record.relayHost ?? "127.0.0.1"):8781") else { return }
@@ -115,6 +124,8 @@ private struct PotCard: View {
     let record: VaultRecord
     var inThisChat: Bool = false
     let onTap: () -> Void
+    var onDelete: (() -> Void)? = nil
+    @State private var confirmDelete = false
 
     var body: some View {
         Button(action: onTap) {
@@ -146,6 +157,19 @@ private struct PotCard: View {
             )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if onDelete != nil {
+                Button(role: .destructive) { confirmDelete = true } label: {
+                    Label("Remove pot", systemImage: "trash")
+                }
+            }
+        }
+        .confirmationDialog("Remove “\(record.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Remove pot", role: .destructive) { onDelete?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the pot from this phone. Any bitcoin still in it stays safe — you'll need at least one other member to move it.")
+        }
     }
 
     private var peopleLine: String {
