@@ -30,6 +30,8 @@ final class VaultCoordinator: ObservableObject {
     @Published private(set) var log: [String] = []
     @Published private(set) var pendingProposal: Proposal?
     @Published private(set) var spendStatus: SpendStatus = .none
+    /// Who's in the pot: member index -> self-introduced name.
+    @Published private(set) var roster: [UInt16: String] = [:]
     /// Test runners set this so a headless member auto-signs proposals.
     var autoApprove = false
 
@@ -57,6 +59,9 @@ final class VaultCoordinator: ObservableObject {
 
     /// Called when DKG completes so the caller can persist the vault.
     var onVaultReady: ((VaultRecord) -> Void)?
+    /// Called as members introduce themselves, so the caller can update
+    /// the saved roster.
+    var onRosterChange: (([UInt16: String]) -> Void)?
 
     init(config: Config, transport: VaultTransport, chain: ChainConfig, mnemonic: String) throws {
         self.config = config
@@ -69,13 +74,15 @@ final class VaultCoordinator: ObservableObject {
     /// Resume an already-established vault (no DKG): load key material and
     /// go straight to ready, then poll for spend proposals.
     init(resuming record: VaultRecord, transport: VaultTransport, chain: ChainConfig, mnemonic: String) throws {
+        let myName = record.roster[String(record.memberIndex)] ?? "Me"
         self.config = Config(vaultID: record.vaultID, name: record.name,
                              memberIndex: record.memberIndex, memberCount: record.memberCount,
-                             threshold: record.threshold, displayName: "Member \(record.memberIndex)")
+                             threshold: record.threshold, displayName: myName)
         self.transport = transport
         self.chain = chain
         self.mnemonic = mnemonic
         self.identity = try FrostMemberIdentity(index: record.memberIndex, mnemonic: mnemonic)
+        for (k, v) in record.roster { if let i = UInt16(k) { self.roster[i] = v } }
         self.vaultKeyHex = record.vaultXonlyHex
         self.publicKeyPackage = record.publicKeyPackage
         self.keyPackage = record.keyPackage
@@ -86,9 +93,14 @@ final class VaultCoordinator: ObservableObject {
     /// Start participating for a resumed vault: begin polling for proposals.
     func resume() async {
         note("Resumed vault ✓ \(config.threshold) of \(config.memberCount)")
+        roster[config.memberIndex] = config.displayName
         startPolling()
+        try? await post(.announce, ["index": Int(config.memberIndex), "name": config.displayName])
         await refreshBalance()
     }
+
+    /// Seed the roster from a persisted record on resume.
+    func seedRoster(_ r: [UInt16: String]) { for (k, v) in r { roster[k] = v } }
 
     // MARK: - DKG
 
@@ -100,7 +112,9 @@ final class VaultCoordinator: ObservableObject {
                 memberCount: config.memberCount, threshold: config.threshold)
             self.dkg = session
             stage = .dkgInProgress("Announcing…")
+            roster[config.memberIndex] = config.displayName
 
+            try await post(.announce, ["index": Int(config.memberIndex), "name": config.displayName])
             // Broadcast our round-1 package.
             let r1 = session.round1Message()
             try await post(.dkgRound1, encode(r1))
@@ -149,7 +163,10 @@ final class VaultCoordinator: ObservableObject {
                     await refreshBalance()
                 }
             case .announce:
-                break
+                if let idx = payload["index"] as? Int, let name = payload["name"] as? String {
+                    roster[UInt16(idx)] = name
+                    onRosterChange?(roster)
+                }
             }
         } catch {
             note("⚠️ \(error.localizedDescription)")
@@ -171,6 +188,7 @@ final class VaultCoordinator: ObservableObject {
             vaultID: config.vaultID, name: config.name, memberIndex: config.memberIndex,
             memberCount: config.memberCount, threshold: config.threshold,
             keyPackage: kp, publicKeyPackage: pub, vaultXonlyHex: key, address: addr,
+            roster: roster.reduce(into: [String: String]()) { $0[String($1.key)] = $1.value },
             relayHost: nil, createdAt: Date()))
         Task { await refreshBalance() }
     }

@@ -8,6 +8,44 @@ struct HomeView: View {
     @State private var showReceive = false
     @State private var showSend = false
     @State private var showSettings = false
+    @State private var showPots = false
+    private var pots: [VaultRecord] { VaultStore().all() }
+
+    private var potsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Shared Pots")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.secondary).textCase(.uppercase)
+                Spacer()
+                Button("See all") { showPots = true }
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+            }
+            .padding(.horizontal, 20)
+            ForEach(pots.prefix(3)) { record in
+                Button { showPots = true } label: {
+                    HStack(spacing: 12) {
+                        Text(potEmoji(for: record.name))
+                            .font(.system(size: 26))
+                            .frame(width: 44, height: 44)
+                            .background(Circle().fill(Brand.subtleGradient))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(record.name)
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text("\(record.memberCount) people · any \(record.threshold) approve")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.quaternary)
+                    }
+                    .padding(.horizontal, 20).padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
     @AppStorage("passkeyNudgeDismissed.v1") private var passkeyNudgeDismissed = false
     @State private var speedingUp = false
 
@@ -93,6 +131,12 @@ struct HomeView: View {
                     .padding(.top, 12)
             }
 
+            if !bridge.isCompact, !pots.isEmpty {
+                potsSection
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+            }
+
             if !bridge.isCompact {
                 activity
                     .padding(.top, 18)
@@ -100,6 +144,7 @@ struct HomeView: View {
 
             Spacer(minLength: 0)
         }
+        .sheet(isPresented: $showPots) { PotsView(store: store) }
         .sheet(isPresented: $showReceive) {
             ReceiveView(store: store, bridge: bridge)
         }

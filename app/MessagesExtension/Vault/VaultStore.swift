@@ -13,6 +13,8 @@ struct VaultRecord: Codable, Identifiable, Equatable {
     let publicKeyPackage: String    // shared
     let vaultXonlyHex: String
     let address: String
+    /// Who's in the pot: index -> self-introduced display name.
+    var roster: [String: String] = [:]
     /// Debug transport host (test harness only).
     var relayHost: String?
     let createdAt: Date

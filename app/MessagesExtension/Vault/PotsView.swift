@@ -89,6 +89,12 @@ struct PotsView: View {
         let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: Int(record.memberIndex))
         guard let c = try? VaultCoordinator(resuming: record, transport: DebugRelayTransport(baseURL: url),
                                             chain: store.chain, mnemonic: memberSeed) else { return }
+        let vs = vaultStore
+        c.onRosterChange = { roster in
+            guard var rec = vs.all().first(where: { $0.vaultID == record.vaultID }) else { return }
+            rec.roster = roster.reduce(into: [String: String]()) { $0[String($1.key)] = $1.value }
+            vs.save(rec)
+        }
         active = c
         Task { await c.resume() }
     }

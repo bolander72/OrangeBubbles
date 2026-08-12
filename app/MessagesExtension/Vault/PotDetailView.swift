@@ -17,6 +17,7 @@ struct PotDetailView: View {
                 header
                 balanceCard
                 actionRow
+                membersCard
                 if coordinator.spendStatus != .none { spendStatusCard }
                 if let p = coordinator.pendingProposal, !isProposerBusy { incomingRequestCard(p) }
                 activityCard
@@ -68,6 +69,61 @@ struct PotDetailView: View {
                 .disabled(coordinator.balanceSats == 0 || coordinator.stage != .ready)
                 .opacity(coordinator.balanceSats == 0 ? 0.5 : 1)
         }
+    }
+
+    private var membersCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("People in this pot")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.secondary).textCase(.uppercase)
+                Spacer()
+                Text("\(coordinator.roster.count) of \(coordinator.config.memberCount) joined")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            ForEach(1...Int(coordinator.config.memberCount), id: \.self) { i in
+                memberRow(index: UInt16(i))
+            }
+            Text(ruleExplanation)
+                .font(.caption).foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(.secondarySystemBackground)))
+    }
+
+    private func memberRow(index: UInt16) -> some View {
+        let name = coordinator.roster[index]
+        let isSelf = index == coordinator.config.memberIndex
+        let joined = name != nil
+        return HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(joined ? avatarColor(index) : Color.gray.opacity(0.25))
+                    .frame(width: 34, height: 34)
+                Text(joined ? String((name ?? "?").prefix(1)).uppercased() : "…")
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .foregroundStyle(.white)
+            }
+            Text(joined ? (name ?? "") + (isSelf ? " (you)" : "") : "Waiting to join…")
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(joined ? .primary : .secondary)
+            Spacer()
+            if joined {
+                Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+            }
+        }
+    }
+
+    private func avatarColor(_ i: UInt16) -> Color {
+        [Brand.orange, .blue, .purple, .green, .pink, .teal][Int(i) % 6]
+    }
+
+    private var ruleExplanation: String {
+        let k = coordinator.config.threshold, n = coordinator.config.memberCount
+        if k == n { return "Every person must approve each spend." }
+        if k == 2 { return "Any 2 people can approve a spend — so one phone can be lost and the money's still safe." }
+        return "Any \(k) of \(n) people can approve a spend."
     }
 
     private var spendStatusCard: some View {
