@@ -10,21 +10,21 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var showPots = false
     private var pots: [VaultRecord] { VaultStore().all() }
-    /// The pot bound to the chat the app is currently open in, if any.
-    private var chatPot: VaultRecord? {
-        guard let key = bridge.chatKey else { return nil }
-        return pots.first { $0.chatKey == key }
+    /// Every pot bound to the chat the app is currently open in.
+    private var chatPots: [VaultRecord] {
+        guard let key = bridge.chatKey else { return [] }
+        return pots.filter { $0.chatKey == key }
     }
-    /// Pots not already surfaced as the current chat's banner.
+    /// Pots not already surfaced as this chat's banners.
     private var otherPots: [VaultRecord] {
-        guard let chat = chatPot else { return pots }
-        return pots.filter { $0.id != chat.id }
+        let here = Set(chatPots.map(\.id))
+        return pots.filter { !here.contains($0.id) }
     }
 
     private var potsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(chatPot == nil ? "Shared Pots" : "Other Pots")
+                Text(chatPots.isEmpty ? "Shared Pots" : "Other Pots")
                     .font(.system(.caption, design: .rounded).weight(.semibold))
                     .foregroundStyle(.secondary).textCase(.uppercase)
                 Spacer()
@@ -56,7 +56,7 @@ struct HomeView: View {
             }
         }
     }
-    private func chatPotBanner(_ pot: VaultRecord) -> some View {
+    private func chatPotBanner(_ pot: VaultRecord, showEyebrow: Bool = true) -> some View {
         Button { showPots = true } label: {
             HStack(spacing: 12) {
                 Text(potEmoji(for: pot.name))
@@ -64,14 +64,16 @@ struct HomeView: View {
                     .frame(width: 48, height: 48)
                     .background(Circle().fill(Color.white.opacity(0.25)))
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("This chat's pot")
-                            .font(.system(.caption2, design: .rounded).weight(.bold))
-                            .foregroundStyle(.white.opacity(0.9)).textCase(.uppercase)
-                        if bridge.chatParticipantCount > 0 {
-                            Text("· \(bridge.chatParticipantCount) here")
-                                .font(.system(.caption2, design: .rounded).weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.75))
+                    if showEyebrow {
+                        HStack(spacing: 6) {
+                            Text("This chat's pot")
+                                .font(.system(.caption2, design: .rounded).weight(.bold))
+                                .foregroundStyle(.white.opacity(0.9)).textCase(.uppercase)
+                            if bridge.chatParticipantCount > 0 {
+                                Text("· \(bridge.chatParticipantCount) here")
+                                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                                    .foregroundStyle(.white.opacity(0.75))
+                            }
                         }
                     }
                     Text(pot.name)
@@ -120,12 +122,21 @@ struct HomeView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
 
-            // This chat has a pot → surface it right by the balance, the
-            // first thing you'd look for when the group is talking money.
-            if let pot = chatPot, !bridge.isCompact {
-                chatPotBanner(pot)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 14)
+            // This chat has one or more pots → surface them right by the
+            // balance, the first thing you'd look for when the group is
+            // talking money.
+            if !chatPots.isEmpty, !bridge.isCompact {
+                VStack(spacing: 10) {
+                    if chatPots.count > 1 {
+                        Text("This chat's pots")
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(.secondary).textCase(.uppercase)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    ForEach(chatPots) { pot in chatPotBanner(pot, showEyebrow: chatPots.count == 1) }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 14)
             }
 
             if !store.backupInICloud {
