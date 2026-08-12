@@ -176,3 +176,155 @@ fn index_of(id: &frost::Identifier, max_signers: u16) -> Result<u16, FrostError>
     }
     Err(FrostError::Frost("identifier not in 1..=max_signers".into()))
 }
+
+// ---- Transaction layer: build sighashes / finalize (ported from the
+//      proven tx PoC). Keeps delicate bitcoin-tx construction in Rust. ----
+
+use bitcoin::hashes::Hash as _;
+use bitcoin::sighash::{Prevouts, SighashCache};
+use bitcoin::{
+    absolute, transaction, Address, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType,
+    Transaction, TxIn, TxOut, Witness, XOnlyPublicKey,
+};
+use std::str::FromStr;
+
+fn net(s: &str) -> Result<bitcoin::Network, FrostError> {
+    match s {
+        "bitcoin" => Ok(bitcoin::Network::Bitcoin),
+        "signet" => Ok(bitcoin::Network::Signet),
+        "testnet" => Ok(bitcoin::Network::Testnet),
+        "regtest" => Ok(bitcoin::Network::Regtest),
+        _ => Err(FrostError::Decode(format!("unknown network {s}"))),
+    }
+}
+
+fn vault_p2tr(xonly_hex: &str, network: bitcoin::Network) -> Result<Address, FrostError> {
+    let bytes = hex::decode(xonly_hex).map_err(|e| FrostError::Decode(e.to_string()))?;
+    let xonly = XOnlyPublicKey::from_slice(&bytes).map_err(|e| FrostError::Decode(e.to_string()))?;
+    // FROST-tr applies the taproot tweak internally: the aggregate key IS
+    // the output key (no script tree).
+    Ok(Address::p2tr_tweaked(
+        bitcoin::key::TweakedPublicKey::dangerous_assume_tweaked(xonly),
+        network,
+    ))
+}
+
+/// The vault's deposit/receive address (p2tr) for a given aggregate key.
+#[uniffi::export]
+pub fn frost_vault_address(xonly_hex: String, network: String) -> Result<String, FrostError> {
+    Ok(vault_p2tr(&xonly_hex, net(&network)?)?.to_string())
+}
+
+#[derive(uniffi::Record)]
+pub struct FrostUtxo {
+    pub txid: String,
+    pub vout: u32,
+    pub value_sats: u64,
+}
+
+#[derive(uniffi::Record)]
+pub struct FrostSpendPlan {
+    /// Serialized unsigned transaction (hex), witnesses empty.
+    pub unsigned_tx_hex: String,
+    /// One taproot keypath sighash (hex) per input, in input order.
+    pub sighashes_hex: Vec<String>,
+}
+
+/// Builds the unsigned sweep/spend transaction and its per-input keypath
+/// sighashes. Sends `amount_sats` to `dest` (0 == sweep all minus fee).
+#[uniffi::export]
+pub fn frost_build_spend(
+    xonly_hex: String,
+    utxos: Vec<FrostUtxo>,
+    dest_address: String,
+    amount_sats: u64,
+    fee_sats: u64,
+    network: String,
+) -> Result<FrostSpendPlan, FrostError> {
+    let network = net(&network)?;
+    let vault = vault_p2tr(&xonly_hex, network)?;
+    let dest = Address::from_str(&dest_address)
+        .map_err(|e| FrostError::Decode(e.to_string()))?
+        .require_network(network)
+        .map_err(|e| FrostError::Decode(e.to_string()))?;
+    if utxos.is_empty() {
+        return Err(FrostError::Frost("no UTXOs to spend".into()));
+    }
+    let total: u64 = utxos.iter().map(|u| u.value_sats).sum();
+    let sweep = amount_sats == 0;
+    let send = if sweep { total.saturating_sub(fee_sats) } else { amount_sats };
+    if send == 0 || send + fee_sats > total {
+        return Err(FrostError::Frost("insufficient funds for amount + fee".into()));
+    }
+
+    let input: Vec<TxIn> = utxos
+        .iter()
+        .map(|u| Ok(TxIn {
+            previous_output: OutPoint {
+                txid: u.txid.parse().map_err(|_| FrostError::Decode("bad txid".into()))?,
+                vout: u.vout,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::new(),
+        }))
+        .collect::<Result<_, FrostError>>()?;
+    let prevouts: Vec<TxOut> = utxos
+        .iter()
+        .map(|u| TxOut { value: Amount::from_sat(u.value_sats), script_pubkey: vault.script_pubkey() })
+        .collect();
+
+    let mut output = vec![TxOut { value: Amount::from_sat(send), script_pubkey: dest.script_pubkey() }];
+    if !sweep {
+        let change = total - send - fee_sats;
+        if change > 546 {
+            output.push(TxOut { value: Amount::from_sat(change), script_pubkey: vault.script_pubkey() });
+        }
+    }
+
+    let tx = Transaction {
+        version: transaction::Version::TWO,
+        lock_time: absolute::LockTime::ZERO,
+        input,
+        output,
+    };
+
+    let mut cache = SighashCache::new(&tx);
+    let mut sighashes = Vec::new();
+    for i in 0..tx.input.len() {
+        let sh = cache
+            .taproot_key_spend_signature_hash(i, &Prevouts::All(&prevouts), TapSighashType::Default)
+            .map_err(|e| FrostError::Frost(e.to_string()))?;
+        sighashes.push(hex::encode(sh.to_raw_hash().to_byte_array()));
+    }
+
+    Ok(FrostSpendPlan {
+        unsigned_tx_hex: bitcoin::consensus::encode::serialize_hex(&tx),
+        sighashes_hex: sighashes,
+    })
+}
+
+/// Injects one 64-byte Schnorr signature (hex) per input into the unsigned
+/// tx and returns the broadcast-ready raw transaction (hex).
+#[uniffi::export]
+pub fn frost_finalize_spend(
+    unsigned_tx_hex: String,
+    signatures_hex: Vec<String>,
+) -> Result<String, FrostError> {
+    let raw = hex::decode(&unsigned_tx_hex).map_err(|e| FrostError::Decode(e.to_string()))?;
+    let mut tx: Transaction = bitcoin::consensus::encode::deserialize(&raw)
+        .map_err(|e| FrostError::Decode(e.to_string()))?;
+    if signatures_hex.len() != tx.input.len() {
+        return Err(FrostError::Frost("signature count != input count".into()));
+    }
+    for (i, sig_hex) in signatures_hex.iter().enumerate() {
+        let sig = hex::decode(sig_hex).map_err(|e| FrostError::Decode(e.to_string()))?;
+        if sig.len() != 64 {
+            return Err(FrostError::Frost("signature must be 64 bytes".into()));
+        }
+        let mut w = Witness::new();
+        w.push(sig);
+        tx.input[i].witness = w;
+    }
+    Ok(bitcoin::consensus::encode::serialize_hex(&tx))
+}

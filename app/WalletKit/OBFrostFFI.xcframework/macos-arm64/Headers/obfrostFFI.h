@@ -266,6 +266,21 @@ RustBuffer uniffi_obfrost_fn_func_dkg_part2(RustBuffer round1_secret, RustBuffer
 RustBuffer uniffi_obfrost_fn_func_dkg_part3(RustBuffer round2_secret, RustBuffer round1_public_by_index, RustBuffer round2_secret_by_index, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OBFROST_FN_FUNC_FROST_BUILD_SPEND
+#define UNIFFI_FFIDEF_UNIFFI_OBFROST_FN_FUNC_FROST_BUILD_SPEND
+RustBuffer uniffi_obfrost_fn_func_frost_build_spend(RustBuffer xonly_hex, RustBuffer utxos, RustBuffer dest_address, uint64_t amount_sats, uint64_t fee_sats, RustBuffer network, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OBFROST_FN_FUNC_FROST_FINALIZE_SPEND
+#define UNIFFI_FFIDEF_UNIFFI_OBFROST_FN_FUNC_FROST_FINALIZE_SPEND
+RustBuffer uniffi_obfrost_fn_func_frost_finalize_spend(RustBuffer unsigned_tx_hex, RustBuffer signatures_hex, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OBFROST_FN_FUNC_FROST_VAULT_ADDRESS
+#define UNIFFI_FFIDEF_UNIFFI_OBFROST_FN_FUNC_FROST_VAULT_ADDRESS
+RustBuffer uniffi_obfrost_fn_func_frost_vault_address(RustBuffer xonly_hex, RustBuffer network, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OBFROST_FN_FUNC_SIGN_AGGREGATE
 #define UNIFFI_FFIDEF_UNIFFI_OBFROST_FN_FUNC_SIGN_AGGREGATE
 RustBuffer uniffi_obfrost_fn_func_sign_aggregate(RustBuffer public_key_package, RustBuffer message_hex, RustBuffer commitments_by_index, RustBuffer shares_by_index, RustCallStatus *_Nonnull out_status
@@ -581,6 +596,24 @@ uint16_t uniffi_obfrost_checksum_func_dkg_part2(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_OBFROST_CHECKSUM_FUNC_DKG_PART3
 #define UNIFFI_FFIDEF_UNIFFI_OBFROST_CHECKSUM_FUNC_DKG_PART3
 uint16_t uniffi_obfrost_checksum_func_dkg_part3(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OBFROST_CHECKSUM_FUNC_FROST_BUILD_SPEND
+#define UNIFFI_FFIDEF_UNIFFI_OBFROST_CHECKSUM_FUNC_FROST_BUILD_SPEND
+uint16_t uniffi_obfrost_checksum_func_frost_build_spend(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OBFROST_CHECKSUM_FUNC_FROST_FINALIZE_SPEND
+#define UNIFFI_FFIDEF_UNIFFI_OBFROST_CHECKSUM_FUNC_FROST_FINALIZE_SPEND
+uint16_t uniffi_obfrost_checksum_func_frost_finalize_spend(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OBFROST_CHECKSUM_FUNC_FROST_VAULT_ADDRESS
+#define UNIFFI_FFIDEF_UNIFFI_OBFROST_CHECKSUM_FUNC_FROST_VAULT_ADDRESS
+uint16_t uniffi_obfrost_checksum_func_frost_vault_address(void
     
 );
 #endif

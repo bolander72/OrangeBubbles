@@ -415,6 +415,38 @@ fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -679,6 +711,158 @@ public func FfiConverterTypeDkgRound2_lower(_ value: DkgRound2) -> RustBuffer {
 }
 
 
+public struct FrostSpendPlan {
+    /**
+     * Serialized unsigned transaction (hex), witnesses empty.
+     */
+    public var unsignedTxHex: String
+    /**
+     * One taproot keypath sighash (hex) per input, in input order.
+     */
+    public var sighashesHex: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Serialized unsigned transaction (hex), witnesses empty.
+         */unsignedTxHex: String, 
+        /**
+         * One taproot keypath sighash (hex) per input, in input order.
+         */sighashesHex: [String]) {
+        self.unsignedTxHex = unsignedTxHex
+        self.sighashesHex = sighashesHex
+    }
+}
+
+
+
+extension FrostSpendPlan: Equatable, Hashable {
+    public static func ==(lhs: FrostSpendPlan, rhs: FrostSpendPlan) -> Bool {
+        if lhs.unsignedTxHex != rhs.unsignedTxHex {
+            return false
+        }
+        if lhs.sighashesHex != rhs.sighashesHex {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(unsignedTxHex)
+        hasher.combine(sighashesHex)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFrostSpendPlan: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FrostSpendPlan {
+        return
+            try FrostSpendPlan(
+                unsignedTxHex: FfiConverterString.read(from: &buf), 
+                sighashesHex: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FrostSpendPlan, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.unsignedTxHex, into: &buf)
+        FfiConverterSequenceString.write(value.sighashesHex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFrostSpendPlan_lift(_ buf: RustBuffer) throws -> FrostSpendPlan {
+    return try FfiConverterTypeFrostSpendPlan.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFrostSpendPlan_lower(_ value: FrostSpendPlan) -> RustBuffer {
+    return FfiConverterTypeFrostSpendPlan.lower(value)
+}
+
+
+public struct FrostUtxo {
+    public var txid: String
+    public var vout: UInt32
+    public var valueSats: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(txid: String, vout: UInt32, valueSats: UInt64) {
+        self.txid = txid
+        self.vout = vout
+        self.valueSats = valueSats
+    }
+}
+
+
+
+extension FrostUtxo: Equatable, Hashable {
+    public static func ==(lhs: FrostUtxo, rhs: FrostUtxo) -> Bool {
+        if lhs.txid != rhs.txid {
+            return false
+        }
+        if lhs.vout != rhs.vout {
+            return false
+        }
+        if lhs.valueSats != rhs.valueSats {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(txid)
+        hasher.combine(vout)
+        hasher.combine(valueSats)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFrostUtxo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FrostUtxo {
+        return
+            try FrostUtxo(
+                txid: FfiConverterString.read(from: &buf), 
+                vout: FfiConverterUInt32.read(from: &buf), 
+                valueSats: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FrostUtxo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.txid, into: &buf)
+        FfiConverterUInt32.write(value.vout, into: &buf)
+        FfiConverterUInt64.write(value.valueSats, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFrostUtxo_lift(_ buf: RustBuffer) throws -> FrostUtxo {
+    return try FfiConverterTypeFrostUtxo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFrostUtxo_lower(_ value: FrostUtxo) -> RustBuffer {
+    return FfiConverterTypeFrostUtxo.lower(value)
+}
+
+
 public struct SigningCommitment {
     public var nonces: String
     public var commitments: String
@@ -812,6 +996,56 @@ extension FrostError: Foundation.LocalizedError {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFrostUtxo: FfiConverterRustBuffer {
+    typealias SwiftType = [FrostUtxo]
+
+    public static func write(_ value: [FrostUtxo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFrostUtxo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FrostUtxo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FrostUtxo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFrostUtxo.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterDictionaryUInt16String: FfiConverterRustBuffer {
     public static func write(_ value: [UInt16: String], into buf: inout [UInt8]) {
         let len = Int32(value.count)
@@ -858,6 +1092,45 @@ public func dkgPart3(round2Secret: String, round1PublicByIndex: [UInt16: String]
         FfiConverterString.lower(round2Secret),
         FfiConverterDictionaryUInt16String.lower(round1PublicByIndex),
         FfiConverterDictionaryUInt16String.lower(round2SecretByIndex),$0
+    )
+})
+}
+/**
+ * Builds the unsigned sweep/spend transaction and its per-input keypath
+ * sighashes. Sends `amount_sats` to `dest` (0 == sweep all minus fee).
+ */
+public func frostBuildSpend(xonlyHex: String, utxos: [FrostUtxo], destAddress: String, amountSats: UInt64, feeSats: UInt64, network: String)throws  -> FrostSpendPlan {
+    return try  FfiConverterTypeFrostSpendPlan.lift(try rustCallWithError(FfiConverterTypeFrostError.lift) {
+    uniffi_obfrost_fn_func_frost_build_spend(
+        FfiConverterString.lower(xonlyHex),
+        FfiConverterSequenceTypeFrostUtxo.lower(utxos),
+        FfiConverterString.lower(destAddress),
+        FfiConverterUInt64.lower(amountSats),
+        FfiConverterUInt64.lower(feeSats),
+        FfiConverterString.lower(network),$0
+    )
+})
+}
+/**
+ * Injects one 64-byte Schnorr signature (hex) per input into the unsigned
+ * tx and returns the broadcast-ready raw transaction (hex).
+ */
+public func frostFinalizeSpend(unsignedTxHex: String, signaturesHex: [String])throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrostError.lift) {
+    uniffi_obfrost_fn_func_frost_finalize_spend(
+        FfiConverterString.lower(unsignedTxHex),
+        FfiConverterSequenceString.lower(signaturesHex),$0
+    )
+})
+}
+/**
+ * The vault's deposit/receive address (p2tr) for a given aggregate key.
+ */
+public func frostVaultAddress(xonlyHex: String, network: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrostError.lift) {
+    uniffi_obfrost_fn_func_frost_vault_address(
+        FfiConverterString.lower(xonlyHex),
+        FfiConverterString.lower(network),$0
     )
 })
 }
@@ -934,6 +1207,15 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_obfrost_checksum_func_dkg_part3() != 32362) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_obfrost_checksum_func_frost_build_spend() != 38239) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_obfrost_checksum_func_frost_finalize_spend() != 2395) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_obfrost_checksum_func_frost_vault_address() != 8225) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_obfrost_checksum_func_sign_aggregate() != 29147) {
