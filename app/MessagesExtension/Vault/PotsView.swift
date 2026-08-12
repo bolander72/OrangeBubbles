@@ -12,6 +12,8 @@ struct PotsView: View {
     @ObservedObject var store: WalletStore
     /// Fingerprint of the chat the app is open in (nil outside a chat).
     var chatKey: String? = nil
+    /// People in the current chat, for deriving pot size automatically.
+    var chatParticipantCount: Int = 0
     @Environment(\.dismiss) private var dismiss
 
     private let vaultStore = VaultStore()
@@ -39,7 +41,7 @@ struct PotsView: View {
             }
             .onAppear(perform: reload)
             .sheet(isPresented: $showCreate) {
-                CreatePotView(store: store, chatKey: chatKey) { coordinator in
+                CreatePotView(store: store, chatKey: chatKey, chatParticipantCount: chatParticipantCount) { coordinator in
                     active = coordinator
                 }
             }

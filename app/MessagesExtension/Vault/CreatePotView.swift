@@ -7,11 +7,18 @@ struct CreatePotView: View {
     @ObservedObject var store: WalletStore
     /// Fingerprint of the chat this pot is being created in (nil outside a chat).
     var chatKey: String? = nil
+    /// How many people are in the current chat — the pot's size is derived
+    /// from this, so we never ask the user "how many people?".
+    var chatParticipantCount: Int = 0
     let onReady: (VaultCoordinator) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
     @State private var people = 3
+
+    /// True when opened inside a real group chat (2+ people) — lets us derive
+    /// the pot size automatically instead of asking.
+    private var inGroupChat: Bool { chatParticipantCount >= 2 }
     @State private var rule: Rule = .any2
     @State private var coordinator: VaultCoordinator?
 
@@ -78,9 +85,25 @@ struct CreatePotView: View {
                 Text("Give it a name your group will recognize in the chat.")
             }
 
-            Section("How many people?") {
-                Stepper("\(people) people (including you)", value: $people, in: 2...5)
-                    .onChange(of: people) { _, n in if rule == .any2 && n < 2 { rule = .everyone } }
+            if inGroupChat {
+                Section {
+                    HStack(spacing: 12) {
+                        IconBubble(systemName: "person.2.fill", tint: Brand.orange, size: 36)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Everyone in this chat")
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            Text("\(people) people")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text("This pot belongs to this group chat. Everyone here can chip in.")
+                }
+            } else {
+                Section("How many people?") {
+                    Stepper("\(people) people (including you)", value: $people, in: 2...5)
+                        .onChange(of: people) { _, n in if rule == .any2 && n < 2 { rule = .everyone } }
+                }
             }
 
             Section("Who can approve a spend?") {
@@ -127,6 +150,7 @@ struct CreatePotView: View {
         .navigationTitle("New Pot")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        .onAppear { if inGroupChat { people = min(max(chatParticipantCount, 2), 5) } }
     }
 
     private func start() {

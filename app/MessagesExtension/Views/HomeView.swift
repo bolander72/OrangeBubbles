@@ -207,7 +207,7 @@ struct HomeView: View {
 
             Spacer(minLength: 0)
         }
-        .sheet(isPresented: $showPots) { PotsView(store: store, chatKey: bridge.chatKey) }
+        .sheet(isPresented: $showPots) { PotsView(store: store, chatKey: bridge.chatKey, chatParticipantCount: bridge.chatParticipantCount) }
         .sheet(isPresented: $showReceive) {
             ReceiveView(store: store, bridge: bridge)
         }
