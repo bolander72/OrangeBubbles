@@ -29,8 +29,18 @@ final class VaultCoordinator: ObservableObject {
     @Published private(set) var balanceSats: UInt64 = 0
     @Published private(set) var log: [String] = []
     @Published private(set) var pendingProposal: Proposal?
+    @Published private(set) var spendStatus: SpendStatus = .none
     /// Test runners set this so a headless member auto-signs proposals.
     var autoApprove = false
+
+    enum SpendStatus: Equatable {
+        case none
+        case proposing
+        case awaitingSignatures(have: Int, need: Int)
+        case broadcasting
+        case done(txid: String)
+        case failed(String)
+    }
 
     let config: Config
     private let transport: VaultTransport
@@ -118,6 +128,7 @@ final class VaultCoordinator: ObservableObject {
             case .spendProposal:
                 let p: Proposal = try decode(payload)
                 resetSpendState()
+                spendStatus = .proposing
                 pendingProposal = p
                 note("Spend proposed: \(Self.sats(p.amountSats)) sats to \(Self.short(p.destination))")
                 if autoApprove { await approve(p) }
@@ -130,6 +141,11 @@ final class VaultCoordinator: ObservableObject {
             case .spendBroadcast:
                 if let txid = payload["txid"] as? String {
                     note("Broadcast! tx \(txid.prefix(12))…")
+                    spendStatus = .done(txid: txid)
+                    pendingProposal = nil
+                    let keep = spendStatus
+                    resetSpendState()
+                    spendStatus = keep
                     await refreshBalance()
                 }
             case .announce:
@@ -192,6 +208,8 @@ final class VaultCoordinator: ObservableObject {
 
     func proposeSpend(to destination: String, amountSats: UInt64?, feeSats: UInt64 = 400) async {
         guard let key = vaultKeyHex else { return }
+        guard pendingProposal == nil else { note("A spend is already in progress"); return }
+        spendStatus = .proposing
         do {
             note("Building spend…")
             resetSpendState()
@@ -204,9 +222,12 @@ final class VaultCoordinator: ObservableObject {
                 unsignedTxHex: plan.unsignedTxHex, sighashes: plan.sighashes)
             currentPlan = plan
             pendingProposal = proposal
+            spendStatus = .awaitingSignatures(have: 0, need: Int(config.threshold))
+            note("Proposed \(Self.sats(proposal.amountSats)) — waiting for \(config.threshold) signatures")
             try await post(.spendProposal, encode(proposal))
             await approve(proposal) // proposer commits too
         } catch {
+            spendStatus = .failed(error.localizedDescription)
             note("⚠️ propose failed: \(error.localizedDescription)")
         }
     }
@@ -222,18 +243,20 @@ final class VaultCoordinator: ObservableObject {
             signing = session
             let commitments = try session.commitments()
             commitsByIndex[config.memberIndex] = commitments
+            if !isProposer { spendStatus = .awaitingSignatures(have: 0, need: Int(config.threshold)) }
             try await post(.spendCommit, ["proposalID": proposal.proposalID, "index": Int(config.memberIndex), "commitments": commitments])
             note("Committed nonces")
         } catch {
+            spendStatus = .failed(error.localizedDescription)
             note("⚠️ approve failed: \(error.localizedDescription)")
         }
     }
 
     /// Proposer only: collect commits, then freeze + broadcast the set.
     private func collectCommit(_ payload: CommitMsg) async throws {
+        guard let proposal = pendingProposal, payload.proposalID == proposal.proposalID else { return }
         commitsByIndex[payload.index] = payload.commitments
         guard isProposer, canonicalSigners == nil,
-              let proposal = pendingProposal,
               commitsByIndex.count >= Int(config.threshold) else { return }
 
         let signers = Array(commitsByIndex.keys.sorted().prefix(Int(config.threshold)))
@@ -253,7 +276,8 @@ final class VaultCoordinator: ObservableObject {
 
     /// Any member: on receiving the canonical set, sign if we're in it.
     private func receiveSigningSet(_ msg: SigningSetMsg) async throws {
-        guard canonicalSigners == nil else { return }
+        guard let proposal = pendingProposal, msg.proposalID == proposal.proposalID,
+              canonicalSigners == nil else { return }
         canonicalSigners = msg.signers
         var comm: [[UInt16: String]] = Array(repeating: [:], count: msg.commitments.count)
         for (i, perInput) in msg.commitments.enumerated() {
@@ -271,16 +295,20 @@ final class VaultCoordinator: ObservableObject {
         partialsByIndex[config.memberIndex] = partials
         try await post(.spendPartial, ["proposalID": proposal.proposalID, "index": Int(config.memberIndex), "partials": partials])
         note("Signed ✓")
+        if !isProposer { spendStatus = .awaitingSignatures(have: 1, need: Int(config.threshold)) }
     }
 
     /// Proposer only: aggregate the canonical set's partials + broadcast.
     private func collectPartial(_ payload: PartialMsg) async throws {
+        guard let proposal = pendingProposal, payload.proposalID == proposal.proposalID else { return }
         partialsByIndex[payload.index] = payload.partials
         guard isProposer, !didBroadcast,
-              let proposal = pendingProposal, let key = vaultKeyHex, let pub = publicKeyPackage,
+              let key = vaultKeyHex, let pub = publicKeyPackage,
               let plan = currentPlan, let signers = canonicalSigners, let comm = canonicalCommitments,
               signers.allSatisfy({ partialsByIndex[$0] != nil }) else { return }
+        spendStatus = .awaitingSignatures(have: partialsByIndex.count, need: Int(config.threshold))
         didBroadcast = true
+        spendStatus = .broadcasting
         let inputs = proposal.sighashes.count
         var partByInput: [[UInt16: String]] = Array(repeating: [:], count: inputs)
         for idx in signers { for i in 0..<inputs { partByInput[i][idx] = partialsByIndex[idx]![i] } }
@@ -292,6 +320,8 @@ final class VaultCoordinator: ObservableObject {
         let txid = try await engine.finalizeAndBroadcast(plan: plan, signatures: sigs, esploraURL: chain.esploraURL)
         try await post(.spendBroadcast, ["txid": txid])
         note("BROADCAST ✓ tx \(txid.prefix(12))…")
+        spendStatus = .done(txid: txid)
+        pendingProposal = nil
         await refreshBalance()
     }
 

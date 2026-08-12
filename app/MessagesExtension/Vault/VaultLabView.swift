@@ -111,6 +111,11 @@ struct VaultLabView: View {
                 }
             }
 
+            // Prominent spend status — the thing that was missing.
+            if c.spendStatus != .none {
+                Section("Spend status") { spendStatusView(c) }
+            }
+
             if c.stage == .ready {
                 Section("Propose a spend") {
                     TextField("Destination address", text: $destination)
@@ -118,17 +123,27 @@ struct VaultLabView: View {
                         .autocorrectionDisabled().textInputAutocapitalization(.never)
                     TextField("Amount in sats (blank = sweep all)", text: $amountText)
                         .keyboardType(.numberPad)
+                    if !destinationValid && !destination.isEmpty {
+                        Text("Not a valid signet address").font(.caption).foregroundStyle(.red)
+                    }
                     Button {
                         let amt = UInt64(amountText.filter(\.isNumber))
                         Task { await c.proposeSpend(to: destination.trimmingCharacters(in: .whitespaces), amountSats: amt) }
-                    } label: { Label("Propose spend", systemImage: "paperplane") }
-                    .disabled(destination.isEmpty)
+                    } label: {
+                        if case .proposing = c.spendStatus {
+                            HStack { ProgressView(); Text("Proposing…") }
+                        } else {
+                            Label("Propose spend", systemImage: "paperplane.fill")
+                        }
+                    }
+                    .disabled(!canPropose(c))
                 }
             }
 
-            if let p = c.pendingProposal {
-                Section("Pending proposal") {
+            if let p = c.pendingProposal, !isBusy(c) {
+                Section("Incoming proposal") {
                     LabeledContent("Amount", value: "\(p.amountSats) sats")
+                    LabeledContent("To", value: String(p.destination.prefix(16)) + "…")
                     Button { Task { await c.approve(p) } } label: {
                         Label("Approve & sign", systemImage: "checkmark.seal.fill")
                     }
@@ -136,6 +151,9 @@ struct VaultLabView: View {
             }
 
             Section("Activity") {
+                if c.log.isEmpty {
+                    Text("No activity yet").font(.caption).foregroundStyle(.secondary)
+                }
                 ForEach(Array(c.log.enumerated().reversed()), id: \.offset) { _, line in
                     Text(line).font(.caption).foregroundStyle(.secondary)
                 }
@@ -150,6 +168,47 @@ struct VaultLabView: View {
         case .ready: return AnyView(Label("Ready", systemImage: "checkmark.shield.fill").foregroundStyle(.green))
         case .error(let e): return AnyView(Label(e, systemImage: "exclamationmark.triangle").foregroundStyle(.red))
         }
+    }
+
+    @ViewBuilder
+    private func spendStatusView(_ c: VaultCoordinator) -> some View {
+        switch c.spendStatus {
+        case .none:
+            EmptyView()
+        case .proposing:
+            Label("Building proposal…", systemImage: "hourglass").foregroundStyle(.orange)
+        case .awaitingSignatures(let have, let need):
+            HStack {
+                ProgressView()
+                Text("Collecting signatures (\(have) of \(need))…")
+            }.foregroundStyle(.orange)
+        case .broadcasting:
+            HStack { ProgressView(); Text("Broadcasting…") }.foregroundStyle(.orange)
+        case .done(let txid):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Sent ✓", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Link(destination: URL(string: "https://mempool.space/signet/tx/\(txid)")!) {
+                    Text("tx \(String(txid.prefix(20)))… — view").font(.caption)
+                }
+            }
+        case .failed(let e):
+            Label(e, systemImage: "xmark.circle.fill").foregroundStyle(.red)
+        }
+    }
+
+    private var destinationValid: Bool {
+        store.isValidAddress(destination.trimmingCharacters(in: .whitespaces))
+    }
+    private func isBusy(_ c: VaultCoordinator) -> Bool {
+        switch c.spendStatus {
+        case .proposing, .awaitingSignatures, .broadcasting: return true
+        default: return false
+        }
+    }
+    private func canPropose(_ c: VaultCoordinator) -> Bool {
+        guard destinationValid, !isBusy(c) else { return false }
+        let amt = amountText.filter(\.isNumber)
+        return amt.isEmpty || (UInt64(amt) ?? 0) >= 546
     }
 
     // MARK: - Actions
