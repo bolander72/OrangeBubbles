@@ -6,10 +6,16 @@ import WalletKit
 struct PotDetailView: View {
     @ObservedObject var store: WalletStore
     @ObservedObject var coordinator: VaultCoordinator
+    /// People in the current chat — used to frame members as "your group".
+    var chatParticipantCount: Int = 0
     let onBack: () -> Void
 
     @State private var showAdd = false
     @State private var showSpend = false
+
+    /// Every pot in a chat shares the same people, so we frame members as the
+    /// chat's group rather than a per-pot roster.
+    private var inGroupChat: Bool { chatParticipantCount >= 2 }
 
     var body: some View {
         ScrollView {
@@ -34,7 +40,7 @@ struct PotDetailView: View {
             Text(potEmoji(for: coordinator.config.name)).font(.system(size: 52))
             Text(coordinator.config.name)
                 .font(.system(.title2, design: .rounded).weight(.bold))
-            Text("\(coordinator.config.memberCount) people · any \(coordinator.config.threshold) approve")
+            Text(inGroupChat ? "Shared with everyone in this chat" : "Shared with your group")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -74,7 +80,7 @@ struct PotDetailView: View {
     private var membersCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("People in this pot")
+                Text(inGroupChat ? "Your group" : "People in this pot")
                     .font(.system(.caption, design: .rounded).weight(.semibold))
                     .foregroundStyle(.secondary).textCase(.uppercase)
                 Spacer()

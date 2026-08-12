@@ -25,7 +25,7 @@ struct PotsView: View {
         NavigationStack {
             Group {
                 if let c = active {
-                    PotDetailView(store: store, coordinator: c, onBack: { active = nil; reload() })
+                    PotDetailView(store: store, coordinator: c, chatParticipantCount: chatParticipantCount, onBack: { active = nil; reload() })
                 } else {
                     home
                 }
