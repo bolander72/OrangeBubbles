@@ -64,9 +64,16 @@ struct HomeView: View {
                     .frame(width: 48, height: 48)
                     .background(Circle().fill(Color.white.opacity(0.25)))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("This chat's pot")
-                        .font(.system(.caption2, design: .rounded).weight(.bold))
-                        .foregroundStyle(.white.opacity(0.9)).textCase(.uppercase)
+                    HStack(spacing: 6) {
+                        Text("This chat's pot")
+                            .font(.system(.caption2, design: .rounded).weight(.bold))
+                            .foregroundStyle(.white.opacity(0.9)).textCase(.uppercase)
+                        if bridge.chatParticipantCount > 0 {
+                            Text("· \(bridge.chatParticipantCount) here")
+                                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.75))
+                        }
+                    }
                     Text(pot.name)
                         .font(.system(.headline, design: .rounded).weight(.bold))
                         .foregroundStyle(.white)
