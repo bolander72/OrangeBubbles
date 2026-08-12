@@ -31,6 +31,8 @@ targets:
       - HostApp
       - Shared
       - PasskeyShared
+      - path: MessagesExtension/Vault/VaultTransport.swift
+      - path: MessagesExtension/Vault/VaultCoordinator.swift
     dependencies:
       - target: MessagesExtension
       - target: WalletWidget

@@ -8,7 +8,15 @@ import SwiftUI
 struct OrangeBubblesApp: App {
     var body: some Scene {
         WindowGroup {
-            HostHomeView()
+            #if DEBUG
+                if VaultTestLaunch.isActive {
+                    VaultTestRunnerView()
+                } else {
+                    HostHomeView()
+                }
+            #else
+                HostHomeView()
+            #endif
         }
     }
 }

@@ -29,6 +29,8 @@ final class VaultCoordinator: ObservableObject {
     @Published private(set) var balanceSats: UInt64 = 0
     @Published private(set) var log: [String] = []
     @Published private(set) var pendingProposal: Proposal?
+    /// Test runners set this so a headless member auto-signs proposals.
+    var autoApprove = false
 
     let config: Config
     private let transport: VaultTransport
@@ -89,7 +91,8 @@ final class VaultCoordinator: ObservableObject {
             case .spendProposal:
                 let p: Proposal = try decode(payload)
                 pendingProposal = p
-                note("Spend proposed: \(Format.sats(p.amountSats)) sats to \(Format.shortAddress(p.destination))")
+                note("Spend proposed: \(Self.sats(p.amountSats)) sats to \(Self.short(p.destination))")
+                if autoApprove { await approve(p) }
             case .spendCommit:
                 try await collectCommit(decode(payload))
             case .spendPartial:
@@ -269,6 +272,14 @@ final class VaultCoordinator: ObservableObject {
     private func decode<T: Decodable>(_ payload: [String: Any]) throws -> T {
         let data = try JSONSerialization.data(withJSONObject: payload)
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private static func sats(_ v: UInt64) -> String {
+        let f = NumberFormatter(); f.numberStyle = .decimal
+        return (f.string(from: NSNumber(value: v)) ?? "\(v)") + " sats"
+    }
+    private static func short(_ a: String) -> String {
+        a.count > 24 ? "\(a.prefix(10))…\(a.suffix(8))" : a
     }
 
     private func note(_ s: String) { log.append(s); if log.count > 40 { log.removeFirst() } }
