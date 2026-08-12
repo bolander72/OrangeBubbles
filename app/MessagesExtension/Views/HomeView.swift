@@ -10,11 +10,21 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var showPots = false
     private var pots: [VaultRecord] { VaultStore().all() }
+    /// The pot bound to the chat the app is currently open in, if any.
+    private var chatPot: VaultRecord? {
+        guard let key = bridge.chatKey else { return nil }
+        return pots.first { $0.chatKey == key }
+    }
+    /// Pots not already surfaced as the current chat's banner.
+    private var otherPots: [VaultRecord] {
+        guard let chat = chatPot else { return pots }
+        return pots.filter { $0.id != chat.id }
+    }
 
     private var potsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Shared Pots")
+                Text(chatPot == nil ? "Shared Pots" : "Other Pots")
                     .font(.system(.caption, design: .rounded).weight(.semibold))
                     .foregroundStyle(.secondary).textCase(.uppercase)
                 Spacer()
@@ -22,7 +32,7 @@ struct HomeView: View {
                     .font(.system(.caption, design: .rounded).weight(.semibold))
             }
             .padding(.horizontal, 20)
-            ForEach(pots.prefix(3)) { record in
+            ForEach(otherPots.prefix(3)) { record in
                 Button { showPots = true } label: {
                     HStack(spacing: 12) {
                         Text(potEmoji(for: record.name))
@@ -46,6 +56,33 @@ struct HomeView: View {
             }
         }
     }
+    private func chatPotBanner(_ pot: VaultRecord) -> some View {
+        Button { showPots = true } label: {
+            HStack(spacing: 12) {
+                Text(potEmoji(for: pot.name))
+                    .font(.system(size: 30))
+                    .frame(width: 48, height: 48)
+                    .background(Circle().fill(Color.white.opacity(0.25)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("This chat's pot")
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .foregroundStyle(.white.opacity(0.9)).textCase(.uppercase)
+                    Text(pot.name)
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                        .foregroundStyle(.white)
+                    RosterStrip(record: pot)
+                        .environment(\.colorScheme, .dark)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold)).foregroundStyle(.white.opacity(0.9))
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Brand.gradient))
+        }
+        .buttonStyle(.plain)
+    }
+
     @AppStorage("passkeyNudgeDismissed.v1") private var passkeyNudgeDismissed = false
     @State private var speedingUp = false
 
@@ -75,6 +112,14 @@ struct HomeView: View {
             actionRow
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
+
+            // This chat has a pot → surface it right by the balance, the
+            // first thing you'd look for when the group is talking money.
+            if let pot = chatPot, !bridge.isCompact {
+                chatPotBanner(pot)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+            }
 
             if !store.backupInICloud {
                 InfoBanner(
@@ -131,7 +176,7 @@ struct HomeView: View {
                     .padding(.top, 12)
             }
 
-            if !bridge.isCompact, !pots.isEmpty {
+            if !bridge.isCompact, !otherPots.isEmpty {
                 potsSection
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
@@ -144,7 +189,7 @@ struct HomeView: View {
 
             Spacer(minLength: 0)
         }
-        .sheet(isPresented: $showPots) { PotsView(store: store) }
+        .sheet(isPresented: $showPots) { PotsView(store: store, chatKey: bridge.chatKey) }
         .sheet(isPresented: $showReceive) {
             ReceiveView(store: store, bridge: bridge)
         }

@@ -15,6 +15,9 @@ struct VaultRecord: Codable, Identifiable, Equatable {
     let address: String
     /// Who's in the pot: index -> self-introduced display name.
     var roster: [String: String] = [:]
+    /// Fingerprint of the iMessage chat this pot lives in, if it was created
+    /// from within a conversation. Lets Home show "this chat has a pot".
+    var chatKey: String?
     /// Debug transport host (test harness only).
     var relayHost: String?
     let createdAt: Date

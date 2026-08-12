@@ -5,6 +5,8 @@ import WalletKit
 /// or "DKG" — just: name it, pick how many people, pick who can approve.
 struct CreatePotView: View {
     @ObservedObject var store: WalletStore
+    /// Fingerprint of the chat this pot is being created in (nil outside a chat).
+    var chatKey: String? = nil
     let onReady: (VaultCoordinator) -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -147,7 +149,8 @@ struct CreatePotView: View {
         guard let c = try? VaultCoordinator(config: cfg, transport: DebugRelayTransport(baseURL: url),
                                             chain: store.chain, mnemonic: memberSeed) else { return }
         let vs = VaultStore()
-        c.onVaultReady = { r in var rec = r; rec.relayHost = host; vs.save(rec) }
+        let chat = chatKey
+        c.onVaultReady = { r in var rec = r; rec.relayHost = host; rec.chatKey = chat; vs.save(rec) }
         c.onRosterChange = { roster in
             guard var rec = vs.all().first(where: { $0.vaultID == id }) else { return }
             rec.roster = roster.reduce(into: [String: String]()) { $0[String($1.key)] = $1.value }

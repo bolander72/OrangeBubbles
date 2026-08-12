@@ -10,6 +10,8 @@ private let potEmojis = ["🍯", "🐷", "🎉", "✈️", "🏠", "🎁", "🍕
 
 struct PotsView: View {
     @ObservedObject var store: WalletStore
+    /// Fingerprint of the chat the app is open in (nil outside a chat).
+    var chatKey: String? = nil
     @Environment(\.dismiss) private var dismiss
 
     private let vaultStore = VaultStore()
@@ -37,7 +39,7 @@ struct PotsView: View {
             }
             .onAppear(perform: reload)
             .sheet(isPresented: $showCreate) {
-                CreatePotView(store: store) { coordinator in
+                CreatePotView(store: store, chatKey: chatKey) { coordinator in
                     active = coordinator
                 }
             }
@@ -50,8 +52,14 @@ struct PotsView: View {
                 if saved.isEmpty {
                     emptyState
                 } else {
-                    ForEach(saved) { record in
-                        PotCard(record: record) { resume(record) }
+                    if let chatKey, saved.contains(where: { $0.chatKey == chatKey }) {
+                        Text("In this chat")
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(.secondary).textCase(.uppercase)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    ForEach(sortedForChat) { record in
+                        PotCard(record: record, inThisChat: record.chatKey != nil && record.chatKey == chatKey) { resume(record) }
                     }
                 }
                 Button {
@@ -81,6 +89,12 @@ struct PotsView: View {
         .padding(.bottom, 8)
     }
 
+    /// Pots in this chat float to the top so the relevant one is obvious.
+    private var sortedForChat: [VaultRecord] {
+        guard let chatKey else { return saved }
+        return saved.sorted { ($0.chatKey == chatKey ? 0 : 1) < ($1.chatKey == chatKey ? 0 : 1) }
+    }
+
     private func reload() { saved = vaultStore.all() }
 
     private func resume(_ record: VaultRecord) {
@@ -103,6 +117,7 @@ struct PotsView: View {
 /// A pot in the list — playful card with emoji, name, balance, people.
 private struct PotCard: View {
     let record: VaultRecord
+    var inThisChat: Bool = false
     let onTap: () -> Void
 
     var body: some View {
@@ -119,12 +134,20 @@ private struct PotCard: View {
                     Text(peopleLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    RosterStrip(record: record)
                 }
                 Spacer()
                 Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(.tertiary)
             }
             .padding(14)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemBackground)))
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Brand.orange.opacity(inThisChat ? 0.9 : 0), lineWidth: 2)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -139,4 +162,44 @@ private struct PotCard: View {
 
 func potEmoji(for name: String) -> String {
     potEmojis[abs(name.hashValue) % potEmojis.count]
+}
+
+/// A compact row of member faces (colored initials) + names, so you can see
+/// who's in a pot straight from the list. Empty slots read "waiting".
+struct RosterStrip: View {
+    let record: VaultRecord
+
+    private var names: [String] {
+        (1...Int(record.memberCount)).map { record.roster[String($0)] ?? "" }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(names.enumerated()), id: \.offset) { _, name in
+                Avatar(name: name)
+            }
+            Text(summary).font(.caption2).foregroundStyle(.tertiary).padding(.leading, 2)
+        }
+        .padding(.top, 1)
+    }
+
+    private var summary: String {
+        let joined = names.filter { !$0.isEmpty }
+        if joined.count == record.memberCount { return joined.joined(separator: ", ") }
+        return "\(joined.count)/\(record.memberCount) joined"
+    }
+
+    struct Avatar: View {
+        let name: String
+        private let palette: [Color] = [.orange, .pink, .purple, .blue, .green, .teal]
+        private var initial: String { name.first.map { String($0).uppercased() } ?? "?" }
+        private var color: Color { name.isEmpty ? Color.gray.opacity(0.4) : palette[abs(name.hashValue) % palette.count] }
+        var body: some View {
+            Text(initial)
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(color))
+        }
+    }
 }

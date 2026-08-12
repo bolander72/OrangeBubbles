@@ -1,3 +1,4 @@
+import CryptoKit
 import Messages
 import UIKit
 import WalletKit
@@ -7,11 +8,37 @@ import WalletKit
 @MainActor
 final class ExtensionBridge: ObservableObject {
     weak var controller: MSMessagesAppViewController?
-    var conversation: MSConversation?
+    var conversation: MSConversation? {
+        didSet { recomputeChatIdentity() }
+    }
 
     @Published var presentationStyle: MSMessagesAppPresentationStyle = .compact
 
+    /// A stable fingerprint of the current chat, derived from the set of
+    /// participant UUIDs Messages exposes. Apple guarantees these identifiers
+    /// are identical across every member's device for the same conversation,
+    /// so the fingerprint is the same for everyone — letting us bind a pot to
+    /// a chat without ever seeing a name or number (the sandbox forbids that).
+    /// nil in a 1:1 or when there are no remote participants yet.
+    @Published private(set) var chatKey: String?
+    /// How many people are in the current chat (including you).
+    @Published private(set) var chatParticipantCount = 0
+
     var isCompact: Bool { presentationStyle == .compact }
+
+    private func recomputeChatIdentity() {
+        guard let conversation else { chatKey = nil; chatParticipantCount = 0; return }
+        let ids = ([conversation.localParticipantIdentifier]
+                   + conversation.remoteParticipantIdentifiers)
+            .map(\.uuidString).sorted()
+        chatParticipantCount = ids.count
+        // A group chat is 3+ (you + 2). A 1:1 has a single remote; still
+        // fingerprintable, but pots are a group concept, so we key on any
+        // chat that has at least one other person.
+        guard conversation.remoteParticipantIdentifiers.isEmpty == false else { chatKey = nil; return }
+        let digest = SHA256.hash(data: Data(ids.joined(separator: "|").utf8))
+        chatKey = digest.map { String(format: "%02x", $0) }.joined().prefix(16).description
+    }
 
     func requestExpanded() {
         guard presentationStyle != .expanded else { return }
