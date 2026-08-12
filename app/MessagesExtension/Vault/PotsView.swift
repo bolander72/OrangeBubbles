@@ -105,12 +105,6 @@ struct PotsView: View {
         let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: Int(record.memberIndex))
         guard let c = try? VaultCoordinator(resuming: record, transport: DebugRelayTransport(baseURL: url),
                                             chain: store.chain, mnemonic: memberSeed) else { return }
-        let vs = vaultStore
-        c.onRosterChange = { roster in
-            guard var rec = vs.all().first(where: { $0.vaultID == record.vaultID }) else { return }
-            rec.roster = roster.reduce(into: [String: String]()) { $0[String($1.key)] = $1.value }
-            vs.save(rec)
-        }
         active = c
         Task { await c.resume() }
     }
@@ -157,51 +151,30 @@ private struct PotCard: View {
     private var peopleLine: String {
         "\(record.memberCount) people · any \(record.threshold) can approve"
     }
-    private func emoji(for name: String) -> String {
-        potEmojis[abs(name.hashValue) % potEmojis.count]
-    }
+    private func emoji(for name: String) -> String { record.emoji ?? potEmoji(for: name) }
 }
 
 func potEmoji(for name: String) -> String {
     potEmojis[abs(name.hashValue) % potEmojis.count]
 }
 
-/// A compact row of member faces (colored initials) + names, so you can see
-/// who's in a pot straight from the list. Empty slots read "waiting".
+/// A compact row of anonymous member faces — no names (iMessage shows the
+/// real people; we just show how many share the pot).
 struct RosterStrip: View {
     let record: VaultRecord
-
-    private var names: [String] {
-        (1...Int(record.memberCount)).map { record.roster[String($0)] ?? "" }
-    }
+    private let palette: [Color] = [.orange, .pink, .purple, .blue, .green, .teal]
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Array(names.enumerated()), id: \.offset) { _, name in
-                Avatar(name: name)
+            ForEach(0..<Int(record.memberCount), id: \.self) { i in
+                Image(systemName: "person.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(palette[i % palette.count]))
             }
-            Text(summary).font(.caption2).foregroundStyle(.tertiary).padding(.leading, 2)
+            Text("\(record.memberCount) people").font(.caption2).foregroundStyle(.tertiary).padding(.leading, 2)
         }
         .padding(.top, 1)
-    }
-
-    private var summary: String {
-        let joined = names.filter { !$0.isEmpty }
-        if joined.count == record.memberCount { return joined.joined(separator: ", ") }
-        return "\(joined.count)/\(record.memberCount) joined"
-    }
-
-    struct Avatar: View {
-        let name: String
-        private let palette: [Color] = [.orange, .pink, .purple, .blue, .green, .teal]
-        private var initial: String { name.first.map { String($0).uppercased() } ?? "?" }
-        private var color: Color { name.isEmpty ? Color.gray.opacity(0.4) : palette[abs(name.hashValue) % palette.count] }
-        var body: some View {
-            Text(initial)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(color))
-        }
     }
 }

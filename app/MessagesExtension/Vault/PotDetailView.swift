@@ -30,6 +30,7 @@ struct PotDetailView: View {
             }
             .padding(20)
         }
+        .refreshable { await coordinator.refreshBalance() }
         .sheet(isPresented: $showAdd) { AddMoneySheet(coordinator: coordinator, store: store) }
         .sheet(isPresented: $showSpend) { SpendSheet(coordinator: coordinator, store: store) }
         .task { await coordinator.refreshBalance() }
@@ -37,7 +38,7 @@ struct PotDetailView: View {
 
     private var header: some View {
         VStack(spacing: 8) {
-            Text(potEmoji(for: coordinator.config.name)).font(.system(size: 52))
+            Text(coordinator.config.emoji ?? potEmoji(for: coordinator.config.name)).font(.system(size: 52))
             Text(coordinator.config.name)
                 .font(.system(.title2, design: .rounded).weight(.bold))
             Text(inGroupChat ? "Shared with everyone in this chat" : "Shared with your group")
@@ -57,9 +58,6 @@ struct PotDetailView: View {
             if let usd = store.usdApprox(coordinator.balanceSats) {
                 Text(usd).font(.system(.caption, design: .rounded)).foregroundStyle(.secondary)
             }
-            Button { Task { await coordinator.refreshBalance() } } label: {
-                Label("Refresh", systemImage: "arrow.clockwise").font(.caption2)
-            }.padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
@@ -84,7 +82,7 @@ struct PotDetailView: View {
                     .font(.system(.caption, design: .rounded).weight(.semibold))
                     .foregroundStyle(.secondary).textCase(.uppercase)
                 Spacer()
-                Text("\(coordinator.roster.count) of \(coordinator.config.memberCount) joined")
+                Text("\(coordinator.joined.count) of \(coordinator.config.memberCount) joined")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
             ForEach(1...Int(coordinator.config.memberCount), id: \.self) { i in
@@ -99,23 +97,24 @@ struct PotDetailView: View {
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(.secondarySystemBackground)))
     }
 
+    /// Anonymous member slot — no names (iMessage shows the real people in the
+    /// chat). Just you-vs-others and whether they've joined this pot yet.
     private func memberRow(index: UInt16) -> some View {
-        let name = coordinator.roster[index]
         let isSelf = index == coordinator.config.memberIndex
-        let joined = name != nil
+        let hasJoined = coordinator.joined.contains(index)
         return HStack(spacing: 12) {
             ZStack {
-                Circle().fill(joined ? avatarColor(index) : Color.gray.opacity(0.25))
+                Circle().fill(hasJoined ? avatarColor(index) : Color.gray.opacity(0.25))
                     .frame(width: 34, height: 34)
-                Text(joined ? String((name ?? "?").prefix(1)).uppercased() : "…")
-                    .font(.system(.subheadline, design: .rounded).weight(.bold))
-                    .foregroundStyle(.white)
+                Image(systemName: "person.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white.opacity(hasJoined ? 1 : 0.7))
             }
-            Text(joined ? (name ?? "") + (isSelf ? " (you)" : "") : "Waiting to join…")
+            Text(isSelf ? "You" : (hasJoined ? "In the group" : "Waiting to join…"))
                 .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(joined ? .primary : .secondary)
+                .foregroundStyle(hasJoined || isSelf ? .primary : .secondary)
             Spacer()
-            if joined {
+            if hasJoined {
                 Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
             }
         }
@@ -185,10 +184,10 @@ struct PotDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Activity").font(.system(.caption, design: .rounded).weight(.semibold))
                 .foregroundStyle(.secondary).textCase(.uppercase)
-            if coordinator.log.isEmpty {
+            if coordinator.activity.isEmpty {
                 Text("Nothing yet.").font(.caption).foregroundStyle(.tertiary)
             }
-            ForEach(Array(coordinator.log.enumerated().reversed().prefix(8)), id: \.offset) { _, line in
+            ForEach(Array(coordinator.activity.enumerated().reversed().prefix(8)), id: \.offset) { _, line in
                 Text(line).font(.caption).foregroundStyle(.secondary)
             }
         }

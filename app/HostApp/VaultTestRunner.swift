@@ -25,8 +25,7 @@ enum VaultTestLaunch {
             name: "test",
             memberIndex: member,
             memberCount: UInt16(d.string(forKey: "vaultN") ?? "3") ?? 3,
-            threshold: UInt16(d.string(forKey: "vaultK") ?? "2") ?? 2,
-            displayName: ["", "Alex", "Sam", "Jordan", "Riley", "Casey"][Int(member) % 6])
+            threshold: UInt16(d.string(forKey: "vaultK") ?? "2") ?? 2)
         return (cfg, host)
     }
 }

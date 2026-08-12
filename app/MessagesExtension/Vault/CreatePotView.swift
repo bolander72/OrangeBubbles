@@ -15,7 +15,10 @@ struct CreatePotView: View {
 
     @State private var name = ""
     @State private var people = 3
+    @State private var emoji = "🍯"
     @State private var showRuleOptions = false
+
+    private let emojiChoices = ["🍯", "🐷", "🎉", "✈️", "🏠", "🎁", "🍕", "⚽️", "🌮", "🏖️", "🎄", "🍻", "💰", "🚗", "🐶"]
 
     /// Plain-language, size-aware summary of the current approval rule, e.g.
     /// "any 2 of you need to say yes" or "everyone needs to say yes".
@@ -74,7 +77,7 @@ struct CreatePotView: View {
     var body: some View {
         NavigationStack {
             if let c = coordinator {
-                SettingUpView(coordinator: c, emoji: potEmoji(for: name)) {
+                SettingUpView(coordinator: c, emoji: emoji) {
                     dismiss(); onReady(c)
                 }
             } else {
@@ -87,9 +90,21 @@ struct CreatePotView: View {
         Form {
             Section {
                 HStack {
-                    Text(potEmoji(for: name.isEmpty ? "pot" : name)).font(.system(size: 30))
+                    Text(emoji).font(.system(size: 30))
                     TextField("Name your pot (e.g. Ski Trip)", text: $name)
                         .font(.system(.body, design: .rounded))
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(emojiChoices, id: \.self) { e in
+                            Text(e).font(.system(size: 26))
+                                .frame(width: 40, height: 40)
+                                .background(Circle().fill(emoji == e ? Brand.orange.opacity(0.2) : Color(.tertiarySystemFill)))
+                                .overlay(Circle().strokeBorder(Brand.orange, lineWidth: emoji == e ? 2 : 0))
+                                .onTapGesture { emoji = e; Haptics.tap() }
+                        }
+                    }
+                    .padding(.vertical, 2)
                 }
             } footer: {
                 Text("Give it a name your group will recognize in the chat.")
@@ -189,19 +204,13 @@ struct CreatePotView: View {
         let cfg = VaultCoordinator.Config(
             vaultID: id, name: name.trimmingCharacters(in: .whitespaces),
             memberIndex: UInt16(memberIndex), memberCount: UInt16(people),
-            threshold: UInt16(threshold),
-            displayName: "Me")
+            threshold: UInt16(threshold), emoji: emoji)
         let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: memberIndex)
         guard let c = try? VaultCoordinator(config: cfg, transport: DebugRelayTransport(baseURL: url),
                                             chain: store.chain, mnemonic: memberSeed) else { return }
         let vs = VaultStore()
         let chat = chatKey
         c.onVaultReady = { r in var rec = r; rec.relayHost = host; rec.chatKey = chat; vs.save(rec) }
-        c.onRosterChange = { roster in
-            guard var rec = vs.all().first(where: { $0.vaultID == id }) else { return }
-            rec.roster = roster.reduce(into: [String: String]()) { $0[String($1.key)] = $1.value }
-            vs.save(rec)
-        }
         coordinator = c
         Task { await c.start() }
     }

@@ -222,8 +222,7 @@ struct VaultLabView: View {
         let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: memberIndex)
         let config = VaultCoordinator.Config(
             vaultID: vaultID, name: vaultID, memberIndex: UInt16(memberIndex),
-            memberCount: UInt16(memberCount), threshold: UInt16(threshold),
-            displayName: "Member \(memberIndex)")
+            memberCount: UInt16(memberCount), threshold: UInt16(threshold))
         guard let c = try? VaultCoordinator(config: config, transport: t, chain: store.chain, mnemonic: memberSeed) else { return }
         var record: VaultRecord?
         c.onVaultReady = { r in

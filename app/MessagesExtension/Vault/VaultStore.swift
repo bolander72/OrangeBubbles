@@ -13,8 +13,8 @@ struct VaultRecord: Codable, Identifiable, Equatable {
     let publicKeyPackage: String    // shared
     let vaultXonlyHex: String
     let address: String
-    /// Who's in the pot: index -> self-introduced display name.
-    var roster: [String: String] = [:]
+    /// User-chosen emoji for the pot (falls back to a name-derived one).
+    var emoji: String?
     /// Fingerprint of the iMessage chat this pot lives in, if it was created
     /// from within a conversation. Lets Home show "this chat has a pot".
     var chatKey: String?

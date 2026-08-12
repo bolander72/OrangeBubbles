@@ -14,7 +14,7 @@ final class VaultCoordinator: ObservableObject {
         let memberIndex: UInt16
         let memberCount: UInt16
         let threshold: UInt16
-        let displayName: String
+        var emoji: String? = nil
     }
 
     enum Stage: Equatable {
@@ -30,8 +30,12 @@ final class VaultCoordinator: ObservableObject {
     @Published private(set) var log: [String] = []
     @Published private(set) var pendingProposal: Proposal?
     @Published private(set) var spendStatus: SpendStatus = .none
-    /// Who's in the pot: member index -> self-introduced name.
-    @Published private(set) var roster: [UInt16: String] = [:]
+    /// Which member slots have joined this pot (anonymous — no names). Used
+    /// only for the "x of n joined" status; the real people are shown by
+    /// iMessage itself in the chat.
+    @Published private(set) var joined: Set<UInt16> = []
+    /// Plain-language, user-facing activity — never the crypto plumbing.
+    @Published private(set) var activity: [String] = []
     /// Test runners set this so a headless member auto-signs proposals.
     var autoApprove = false
 
@@ -59,9 +63,6 @@ final class VaultCoordinator: ObservableObject {
 
     /// Called when DKG completes so the caller can persist the vault.
     var onVaultReady: ((VaultRecord) -> Void)?
-    /// Called as members introduce themselves, so the caller can update
-    /// the saved roster.
-    var onRosterChange: (([UInt16: String]) -> Void)?
 
     init(config: Config, transport: VaultTransport, chain: ChainConfig, mnemonic: String) throws {
         self.config = config
@@ -74,15 +75,13 @@ final class VaultCoordinator: ObservableObject {
     /// Resume an already-established vault (no DKG): load key material and
     /// go straight to ready, then poll for spend proposals.
     init(resuming record: VaultRecord, transport: VaultTransport, chain: ChainConfig, mnemonic: String) throws {
-        let myName = record.roster[String(record.memberIndex)] ?? "Me"
         self.config = Config(vaultID: record.vaultID, name: record.name,
                              memberIndex: record.memberIndex, memberCount: record.memberCount,
-                             threshold: record.threshold, displayName: myName)
+                             threshold: record.threshold, emoji: record.emoji)
         self.transport = transport
         self.chain = chain
         self.mnemonic = mnemonic
         self.identity = try FrostMemberIdentity(index: record.memberIndex, mnemonic: mnemonic)
-        for (k, v) in record.roster { if let i = UInt16(k) { self.roster[i] = v } }
         self.vaultKeyHex = record.vaultXonlyHex
         self.publicKeyPackage = record.publicKeyPackage
         self.keyPackage = record.keyPackage
@@ -92,15 +91,11 @@ final class VaultCoordinator: ObservableObject {
 
     /// Start participating for a resumed vault: begin polling for proposals.
     func resume() async {
-        note("Resumed vault ✓ \(config.threshold) of \(config.memberCount)")
-        roster[config.memberIndex] = config.displayName
+        joined.insert(config.memberIndex)
         startPolling()
-        try? await post(.announce, ["index": Int(config.memberIndex), "name": config.displayName])
+        try? await post(.announce, ["index": Int(config.memberIndex)])
         await refreshBalance()
     }
-
-    /// Seed the roster from a persisted record on resume.
-    func seedRoster(_ r: [UInt16: String]) { for (k, v) in r { roster[k] = v } }
 
     // MARK: - DKG
 
@@ -112,9 +107,9 @@ final class VaultCoordinator: ObservableObject {
                 memberCount: config.memberCount, threshold: config.threshold)
             self.dkg = session
             stage = .dkgInProgress("Announcing…")
-            roster[config.memberIndex] = config.displayName
+            joined.insert(config.memberIndex)
 
-            try await post(.announce, ["index": Int(config.memberIndex), "name": config.displayName])
+            try await post(.announce, ["index": Int(config.memberIndex)])
             // Broadcast our round-1 package.
             let r1 = session.round1Message()
             try await post(.dkgRound1, encode(r1))
@@ -144,7 +139,7 @@ final class VaultCoordinator: ObservableObject {
                 resetSpendState()
                 spendStatus = .proposing
                 pendingProposal = p
-                note("Spend proposed: \(Self.sats(p.amountSats)) sats to \(Self.short(p.destination))")
+                event("Someone asked to spend \(Self.sats(p.amountSats))")
                 if autoApprove { await approve(p) }
             case .spendCommit:
                 try await collectCommit(decode(payload))
@@ -154,7 +149,7 @@ final class VaultCoordinator: ObservableObject {
                 try await collectPartial(decode(payload))
             case .spendBroadcast:
                 if let txid = payload["txid"] as? String {
-                    note("Broadcast! tx \(txid.prefix(12))…")
+                    event("Sent ✓")
                     spendStatus = .done(txid: txid)
                     pendingProposal = nil
                     let keep = spendStatus
@@ -163,10 +158,7 @@ final class VaultCoordinator: ObservableObject {
                     await refreshBalance()
                 }
             case .announce:
-                if let idx = payload["index"] as? Int, let name = payload["name"] as? String {
-                    roster[UInt16(idx)] = name
-                    onRosterChange?(roster)
-                }
+                if let idx = payload["index"] as? Int { joined.insert(UInt16(idx)) }
             }
         } catch {
             note("⚠️ \(error.localizedDescription)")
@@ -183,13 +175,12 @@ final class VaultCoordinator: ObservableObject {
         let addr = try engine.address()
         vaultAddress = addr
         stage = .ready
-        note("Vault ready ✓ key \(key.prefix(12))…")
+        event("Pot is ready 🎉")
         onVaultReady?(VaultRecord(
             vaultID: config.vaultID, name: config.name, memberIndex: config.memberIndex,
             memberCount: config.memberCount, threshold: config.threshold,
             keyPackage: kp, publicKeyPackage: pub, vaultXonlyHex: key, address: addr,
-            roster: roster.reduce(into: [String: String]()) { $0[String($1.key)] = $1.value },
-            relayHost: nil, createdAt: Date()))
+            emoji: config.emoji, relayHost: nil, createdAt: Date()))
         Task { await refreshBalance() }
     }
 
@@ -241,12 +232,12 @@ final class VaultCoordinator: ObservableObject {
             currentPlan = plan
             pendingProposal = proposal
             spendStatus = .awaitingSignatures(have: 0, need: Int(config.threshold))
-            note("Proposed \(Self.sats(proposal.amountSats)) — waiting for \(config.threshold) signatures")
+            event("You asked to spend \(Self.sats(proposal.amountSats))")
             try await post(.spendProposal, encode(proposal))
             await approve(proposal) // proposer commits too
         } catch {
-            spendStatus = .failed(error.localizedDescription)
-            note("⚠️ propose failed: \(error.localizedDescription)")
+            spendStatus = .failed(friendlyError(error))
+            event("Couldn't send — \(friendlyError(error))")
         }
     }
 
@@ -261,11 +252,14 @@ final class VaultCoordinator: ObservableObject {
             signing = session
             let commitments = try session.commitments()
             commitsByIndex[config.memberIndex] = commitments
-            if !isProposer { spendStatus = .awaitingSignatures(have: 0, need: Int(config.threshold)) }
+            if !isProposer {
+                spendStatus = .awaitingSignatures(have: 0, need: Int(config.threshold))
+                event("You approved this spend")
+            }
             try await post(.spendCommit, ["proposalID": proposal.proposalID, "index": Int(config.memberIndex), "commitments": commitments])
             note("Committed nonces")
         } catch {
-            spendStatus = .failed(error.localizedDescription)
+            spendStatus = .failed(friendlyError(error))
             note("⚠️ approve failed: \(error.localizedDescription)")
         }
     }
@@ -337,7 +331,7 @@ final class VaultCoordinator: ObservableObject {
         let engine = FrostVaultEngine(vaultXonlyHex: key, network: chain.network)
         let txid = try await engine.finalizeAndBroadcast(plan: plan, signatures: sigs, esploraURL: chain.esploraURL)
         try await post(.spendBroadcast, ["txid": txid])
-        note("BROADCAST ✓ tx \(txid.prefix(12))…")
+        event("Sent ✓")
         spendStatus = .done(txid: txid)
         pendingProposal = nil
         await refreshBalance()
@@ -411,6 +405,21 @@ final class VaultCoordinator: ObservableObject {
     }
 
     private func note(_ s: String) { log.append(s); if log.count > 40 { log.removeFirst() } }
+
+    /// Plain-language, user-facing activity (never crypto plumbing).
+    private func event(_ s: String) {
+        activity.append(s)
+        if activity.count > 20 { activity.removeFirst() }
+    }
+
+    /// Turn engine/network errors into something a normal person can read.
+    private func friendlyError(_ error: Error) -> String {
+        let m = error.localizedDescription.lowercased()
+        if m.contains("insufficient") || m.contains("funds") { return "not enough in the pot" }
+        if m.contains("address") { return "that address looks wrong" }
+        if m.contains("network") || m.contains("connection") || m.contains("timed out") { return "no connection — try again" }
+        return "something went wrong — try again"
+    }
 
     deinit { pollTask?.cancel() }
 }
