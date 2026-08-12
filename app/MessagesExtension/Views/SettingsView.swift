@@ -182,10 +182,10 @@ struct SettingsView: View {
                 Button {
                     showVaultLab = true
                 } label: {
-                    Label("Vault Lab (FROST test)", systemImage: "person.3.sequence.fill")
+                    Label("Shared Pots (FROST)", systemImage: "person.3.sequence.fill")
                 }
                 .sheet(isPresented: $showVaultLab) {
-                    VaultLabView(store: store)
+                    PotsView(store: store)
                 }
 
                 Button(role: .destructive) {
