@@ -15,6 +15,16 @@ struct CreatePotView: View {
 
     @State private var name = ""
     @State private var people = 3
+    @State private var showRuleOptions = false
+
+    /// Plain-language, size-aware summary of the current approval rule, e.g.
+    /// "any 2 of you need to say yes" or "everyone needs to say yes".
+    private var ruleSummary: String {
+        let k = rule.threshold(of: people)
+        if k >= people { return "everyone needs to say yes" }
+        if k == 2 { return "any 2 of you need to say yes" }
+        return "any \(k) of \(people) need to say yes"
+    }
 
     /// True when opened inside a real group chat (2+ people) — lets us derive
     /// the pot size automatically instead of asking.
@@ -106,21 +116,38 @@ struct CreatePotView: View {
                 }
             }
 
-            Section("Who can approve a spend?") {
-                ForEach(Rule.allCases) { r in
-                    Button { rule = r } label: {
-                        HStack(spacing: 12) {
-                            IconBubble(systemName: r.icon, tint: rule == r ? Brand.orange : .gray, size: 36)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(r.title).font(.system(.subheadline, design: .rounded).weight(.semibold)).foregroundStyle(.primary)
-                                Text(r.subtitle).font(.caption).foregroundStyle(.secondary)
+            // Money-safety choice, but pre-set to a smart default and
+            // collapsed to a single row — ignore it and tap Create, or open
+            // it to change. Not buried in developer settings; it's a real
+            // user preference, just not a demanding one.
+            Section {
+                DisclosureGroup(isExpanded: $showRuleOptions) {
+                    ForEach(Rule.allCases) { r in
+                        Button { rule = r; withAnimation { showRuleOptions = false } } label: {
+                            HStack(spacing: 12) {
+                                IconBubble(systemName: r.icon, tint: rule == r ? Brand.orange : .gray, size: 36)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(r.title).font(.system(.subheadline, design: .rounded).weight(.semibold)).foregroundStyle(.primary)
+                                    Text(r.subtitle).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if rule == r { Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.orange) }
                             }
-                            Spacer()
-                            if rule == r { Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.orange) }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        IconBubble(systemName: rule.icon, tint: Brand.orange, size: 36)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("To spend, \(ruleSummary)")
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold)).foregroundStyle(.primary)
+                            Text("Tap to change").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    .buttonStyle(.plain)
                 }
+            } header: {
+                Text("Approving a spend")
             }
 
             #if DEBUG
