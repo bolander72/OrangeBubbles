@@ -205,6 +205,44 @@ final class ClaimVoucherTests: XCTestCase {
     }
 }
 
+final class VaultTests: XCTestCase {
+    func testCosignerXpubDerivesFromSeed() throws {
+        let m = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+        let xpub = try VaultEngine.cosignerXpub(mnemonic: m, network: .signet)
+        XCTAssertFalse(xpub.isEmpty)
+        // Deterministic: same seed -> same cosigner key.
+        let again = try VaultEngine.cosignerXpub(mnemonic: m, network: .signet)
+        XCTAssertEqual(xpub, again)
+    }
+
+    func testAssembledDescriptorIsOrderIndependent() throws {
+        let m1 = try WalletEngine.generateSecrets(network: .signet).mnemonic
+        let m2 = try WalletEngine.generateSecrets(network: .signet).mnemonic
+        let m3 = try WalletEngine.generateSecrets(network: .signet).mnemonic
+        let x1 = try VaultEngine.cosignerXpub(mnemonic: m1, network: .signet)
+        let x2 = try VaultEngine.cosignerXpub(mnemonic: m2, network: .signet)
+        let x3 = try VaultEngine.cosignerXpub(mnemonic: m3, network: .signet)
+
+        let a = try VaultEngine.assembleDescriptor(threshold: 2, cosignerXpubs: [x1, x2, x3], network: .signet)
+        let b = try VaultEngine.assembleDescriptor(threshold: 2, cosignerXpubs: [x3, x1, x2], network: .signet)
+        // sortedmulti (BIP67) -> identical descriptor regardless of input order.
+        XCTAssertEqual(a, b, "vault descriptor must not depend on member ordering")
+        XCTAssertTrue(a.external.hasPrefix("wsh(sortedmulti(2,"))
+    }
+
+    func testVaultAddressIsBech32() throws {
+        let m1 = try WalletEngine.generateSecrets(network: .signet).mnemonic
+        let m2 = try WalletEngine.generateSecrets(network: .signet).mnemonic
+        let x1 = try VaultEngine.cosignerXpub(mnemonic: m1, network: .signet)
+        let x2 = try VaultEngine.cosignerXpub(mnemonic: m2, network: .signet)
+        let desc = try VaultEngine.assembleDescriptor(threshold: 2, cosignerXpubs: [x1, x2], network: .signet)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vault-\(UUID().uuidString)")
+        let engine = try VaultEngine(descriptors: desc, network: .signet, storageDirectory: dir)
+        let addr = try engine.depositAddress()
+        XCTAssertTrue(addr.hasPrefix("tb1q"), "P2WSH signet address is bech32 tb1q…")
+    }
+}
+
 final class BackupVersioningTests: XCTestCase {
     private func makeSecrets(hint: UInt32) -> WalletSecrets {
         WalletSecrets(
