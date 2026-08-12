@@ -18,6 +18,11 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>The camera is used to scan Bitcoin QR codes when sending a payment.</string>
 	<key>NSExtension</key>
@@ -29,6 +34,8 @@
 	</dict>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Face ID protects your Bitcoin wallet: it's required to create, unlock, and send from your wallet.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OrangeBubbles connects to a local test relay on your Mac during development.</string>
 	<key>WalletNetwork</key>
 	<string>$(WALLET_NETWORK)</string>
 </dict>

@@ -13,6 +13,7 @@ struct SettingsView: View {
         @State private var showClaimLinkPrompt = false
         @State private var passkeyProbeResult: String?
         @State private var showWipeConfirm = false
+        @State private var showVaultLab = false
         @State private var claimLinkText = ""
         @State private var debugVoucher: ClaimVoucher?
     #endif
@@ -176,6 +177,15 @@ struct SettingsView: View {
                     showClaimLinkPrompt = true
                 } label: {
                     Label("Open a claim link…", systemImage: "link")
+                }
+
+                Button {
+                    showVaultLab = true
+                } label: {
+                    Label("Vault Lab (FROST test)", systemImage: "person.3.sequence.fill")
+                }
+                .sheet(isPresented: $showVaultLab) {
+                    VaultLabView(store: store)
                 }
 
                 Button(role: .destructive) {

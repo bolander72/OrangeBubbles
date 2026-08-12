@@ -1,4 +1,0 @@
-module obfrostFFI {
-    header "obfrostFFI.h"
-    export *
-}

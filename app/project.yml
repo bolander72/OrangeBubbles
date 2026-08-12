@@ -105,6 +105,11 @@ targets:
           unlock, and send from your wallet.
         NSCameraUsageDescription: >-
           The camera is used to scan Bitcoin QR codes when sending a payment.
+        NSLocalNetworkUsageDescription: >-
+          OrangeBubbles connects to a local test relay on your Mac during
+          development.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSExtension:
           NSExtensionPointIdentifier: com.apple.message-payload-provider
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MessagesViewController

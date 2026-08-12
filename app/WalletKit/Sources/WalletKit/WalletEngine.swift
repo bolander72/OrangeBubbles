@@ -1,4 +1,5 @@
 import BitcoinDevKit
+import CryptoKit
 import Foundation
 
 /// Thin wrapper around a BitcoinDevKit descriptor wallet. All chain logic —
@@ -45,6 +46,14 @@ public final class WalletEngine: @unchecked Sendable {
             network: network,
             scriptType: scriptType
         )
+    }
+
+    /// Deterministic 24-word mnemonic from an arbitrary string — used by
+    /// the vault test lab so one device can stand in for distinct members.
+    /// (Test tooling; real members each have their own wallet seed.)
+    public static func deterministicMnemonic(from source: String) throws -> String {
+        let entropy = Data(SHA256.hash(data: Data(source.utf8)))
+        return try Mnemonic.fromEntropy(entropy: [UInt8](entropy)).description
     }
 
     /// Builds (or reopens) the wallet for the given secrets. `storageDirectory`

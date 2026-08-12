@@ -565,6 +565,11 @@ final class WalletStore: ObservableObject {
         backupInICloud = inICloud
     }
 
+    #if DEBUG
+        /// The current wallet mnemonic, for the vault test lab only.
+        var debugMnemonic: String? { secrets?.mnemonic }
+    #endif
+
     // MARK: - Helpers
 
     private func report(_ error: Error) {

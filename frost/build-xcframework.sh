@@ -5,8 +5,9 @@ set -e
 cd "$(dirname "$0")"
 cargo build --release --lib
 cargo run --release --bin uniffi-bindgen generate --library target/release/libobfrost.dylib --language swift --out-dir bindings 2>/dev/null
-cp bindings/obfrostFFI.h Headers/
-cp bindings/obfrostFFI.modulemap Headers/module.modulemap
+rm -rf Headers && mkdir -p Headers/obfrostFFI
+cp bindings/obfrostFFI.h Headers/obfrostFFI/
+cp bindings/obfrostFFI.modulemap Headers/obfrostFFI/module.modulemap
 # Keep ONLY the uniffi C-ABI entry points global; localize everything
 # else (Rust runtime + secp256k1 C lib) so the archive never collides
 # with bdk-swift's own bundled copies.
