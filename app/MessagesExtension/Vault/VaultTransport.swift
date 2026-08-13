@@ -33,6 +33,64 @@ struct DebugRelayTransport: VaultTransport {
     }
 }
 
+/// The shipping, serverless transport: ceremony state rides a single evolving
+/// iMessage card that the group passes around. Each member merges the card's
+/// messages with their own and re-sends (one tap). No server, no ordering
+/// authority — the message set is grow-only and keyed by identity, so unioning
+/// converges even if two people send concurrently or out of order (a CRDT-style
+/// grow-only set). This is what replaces the debug relay in production.
+///
+/// The transport is a passive store: the app feeds incoming card payloads in
+/// via `ingest`, and `onOutgoing` fires whenever our own state changes so the
+/// app can render/update the MSSession card for the user to send. The
+/// coordinator's existing poll loop reads the local union through `fetch`.
+@MainActor
+final class IMessageTransport: VaultTransport {
+    /// Grow-only union of ceremony messages, keyed by identity.
+    private var messages: [String: [String: Any]] = [:]
+    private var order: [String] = []
+
+    /// Fires when our known state changes (a peer's card arrived, or we posted)
+    /// so the app can put the full union on the evolving card. Passed the whole
+    /// message set — the card always carries everything so any tapper catches up.
+    var onOutgoing: (([[String: Any]]) -> Void)?
+
+    /// Each ceremony message is sent at most once per (kind, sender, proposal),
+    /// so this key makes the union idempotent and order-independent.
+    static func key(_ m: [String: Any]) -> String {
+        let kind = m["kind"] as? String ?? "?"
+        let sender = m["sender"] as? Int ?? -1
+        let pid = (m["payload"] as? [String: Any])?["proposalID"] as? String ?? ""
+        return "\(kind):\(sender):\(pid)"
+    }
+
+    private func merge(_ incoming: [[String: Any]]) -> Bool {
+        var changed = false
+        for m in incoming {
+            let id = Self.key(m)
+            if messages[id] == nil { order.append(id); changed = true }
+            messages[id] = m
+        }
+        return changed
+    }
+
+    private func ordered() -> [[String: Any]] { order.compactMap { messages[$0] } }
+
+    /// The app calls this when a ceremony card is received or tapped.
+    func ingest(_ incoming: [[String: Any]]) {
+        if merge(incoming) { onOutgoing?(ordered()) }
+    }
+
+    // MARK: VaultTransport
+
+    func post(vaultID: String, message: [String: Any]) async throws {
+        _ = merge([message])
+        onOutgoing?(ordered())
+    }
+
+    func fetch(vaultID: String) async throws -> [[String: Any]] { ordered() }
+}
+
 /// Ceremony message envelope kinds exchanged over the transport. Each
 /// wraps a WalletKit Codable payload as JSON.
 enum VaultMessageKind: String {

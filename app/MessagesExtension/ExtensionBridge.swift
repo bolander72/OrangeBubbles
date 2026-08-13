@@ -40,6 +40,68 @@ final class ExtensionBridge: ObservableObject {
         chatKey = digest.map { String(format: "%02x", $0) }.joined().prefix(16).description
     }
 
+    /// This device's member slot in the chat, assigned WITHOUT any coordinator:
+    /// everyone sorts the same participant-UUID set (Apple guarantees it's
+    /// identical across devices) and takes their own 1-based position. So slot
+    /// assignment is deterministic and collision-free with zero negotiation —
+    /// the trustless, serverless way to give each member a distinct FROST index.
+    /// Returns (index, memberCount), or nil outside a group chat.
+    var memberSlot: (index: UInt16, count: UInt16)? {
+        guard let conversation, !conversation.remoteParticipantIdentifiers.isEmpty else { return nil }
+        let local = conversation.localParticipantIdentifier.uuidString
+        let ids = ([conversation.localParticipantIdentifier]
+                   + conversation.remoteParticipantIdentifiers)
+            .map(\.uuidString).sorted()
+        guard let pos = ids.firstIndex(of: local) else { return nil }
+        return (UInt16(pos + 1), UInt16(ids.count))
+    }
+
+    // MARK: - Pot ceremony card (serverless FROST over iMessage)
+
+    /// One MSSession per pot so the ceremony stays a single evolving bubble.
+    private var ceremonySessions: [String: MSSession] = [:]
+    /// The app sets this to route an incoming/tapped ceremony card to the
+    /// active pot controller. If a card arrives before the controller exists
+    /// (cold start straight into a tapped card), it's buffered and delivered
+    /// as soon as the handler is set.
+    var onCeremonyCard: ((PotCeremonyCard) -> Void)? {
+        didSet {
+            if let card = pendingCeremonyCard, let handler = onCeremonyCard {
+                pendingCeremonyCard = nil
+                handler(card)
+            }
+        }
+    }
+    private var pendingCeremonyCard: PotCeremonyCard?
+
+    private func routeCeremony(_ card: PotCeremonyCard) {
+        if let handler = onCeremonyCard { handler(card) } else { pendingCeremonyCard = card }
+    }
+
+    /// Insert/update the pot's evolving ceremony card with the latest state.
+    /// The user taps send — we never auto-send.
+    func updateCeremonyCard(_ card: PotCeremonyCard) {
+        guard let conversation, let url = card.url() else { return }
+        let session = ceremonySessions[card.vaultID]
+            ?? conversation.selectedMessage?.session
+            ?? MSSession()
+        ceremonySessions[card.vaultID] = session
+
+        let layout = MSMessageTemplateLayout()
+        layout.caption = "\(card.emoji) \(card.name)"
+        layout.subcaption = card.messages.isEmpty
+            ? "Tap to start the pot" : "Tap to join · \(card.ruleLine)"
+        layout.trailingCaption = "Tap"
+
+        let message = MSMessage(session: session)
+        message.url = url
+        message.layout = layout
+        message.summaryText = "🍯 Shared pot"
+        conversation.insert(message) { error in
+            if let error { NSLog("ceremony card insert failed: \(error)") }
+        }
+    }
+
     func requestExpanded() {
         guard presentationStyle != .expanded else { return }
         controller?.requestPresentationStyle(.expanded)
@@ -132,6 +194,15 @@ final class ExtensionBridge: ObservableObject {
         selectedSession = message.session
 
         switch components.path {
+        case PotCeremonyCard.path:
+            // Keep the pot's evolving bubble on the same session so our updates
+            // replace it in place, then hand the card to the pot controller.
+            if let url = message.url, let card = PotCeremonyCard(url: url) {
+                ceremonySessions[card.vaultID] = message.session
+                routeCeremony(card)
+            }
+            requestExpanded()
+            return
         case "/claim":
             // Voucher parsing derives the claim address from the secret —
             // a real wallet-engine construction — so keep it off-main.

@@ -4,7 +4,15 @@ import WalletKit
 struct HomeView: View {
     @ObservedObject var store: WalletStore
     @ObservedObject var bridge: ExtensionBridge
+    @StateObject private var ceremony: PotCeremonyController
 
+    init(store: WalletStore, bridge: ExtensionBridge) {
+        _store = ObservedObject(wrappedValue: store)
+        _bridge = ObservedObject(wrappedValue: bridge)
+        _ceremony = StateObject(wrappedValue: PotCeremonyController(store: store, bridge: bridge))
+    }
+
+    @State private var showStartPot = false
     @State private var showReceive = false
     @State private var showSend = false
     @State private var showSettings = false
@@ -139,6 +147,16 @@ struct HomeView: View {
                 .padding(.top, 14)
             }
 
+            // Start a pot right here in the chat, over iMessage (no server).
+            if ceremony.canStart, chatPots.isEmpty, !bridge.isCompact {
+                Button { showStartPot = true } label: {
+                    Label("Start a pot in this chat", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(ProminentButtonStyle())
+                .padding(.horizontal, 20)
+                .padding(.top, 14)
+            }
+
             if !store.backupInICloud {
                 InfoBanner(
                     systemName: "icloud.slash.fill",
@@ -208,6 +226,22 @@ struct HomeView: View {
             Spacer(minLength: 0)
         }
         .sheet(isPresented: $showPots) { PotsView(store: store, chatKey: bridge.chatKey, chatParticipantCount: bridge.chatParticipantCount) }
+        .sheet(isPresented: $showStartPot) {
+            StartPotSheet { name, emoji in ceremony.create(name: name, emoji: emoji) }
+        }
+        .sheet(isPresented: Binding(
+            get: { ceremony.coordinator != nil },
+            set: { if !$0 { ceremony.close() } }
+        )) {
+            if let c = ceremony.coordinator {
+                NavigationStack {
+                    PotDetailView(store: store, coordinator: c,
+                                  chatParticipantCount: bridge.chatParticipantCount) {
+                        ceremony.close()
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $showReceive) {
             ReceiveView(store: store, bridge: bridge)
         }
