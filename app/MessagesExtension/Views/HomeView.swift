@@ -229,19 +229,10 @@ struct HomeView: View {
         .sheet(isPresented: $showStartPot) {
             StartPotSheet { name, emoji in ceremony.create(name: name, emoji: emoji) }
         }
-        .sheet(isPresented: Binding(
-            get: { ceremony.coordinator != nil },
-            set: { if !$0 { ceremony.close() } }
-        )) {
-            if let c = ceremony.coordinator {
-                NavigationStack {
-                    PotDetailView(store: store, coordinator: c,
-                                  chatParticipantCount: bridge.chatParticipantCount) {
-                        ceremony.close()
-                    }
-                }
-            }
-        }
+        // Note: we intentionally do NOT cover the compose field with the pot
+        // detail while a ceremony is in flight — the user needs to tap Send on
+        // the staged invite card. The pot appears in "This chat's pots" once
+        // setup completes; tap it there to open the detail.
         .sheet(isPresented: $showReceive) {
             ReceiveView(store: store, bridge: bridge)
         }

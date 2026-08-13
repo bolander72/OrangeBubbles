@@ -97,14 +97,24 @@ final class ExtensionBridge: ObservableObject {
         message.url = url
         message.layout = layout
         message.summaryText = "🍯 Shared pot"
-        conversation.insert(message) { error in
-            if let error { NSLog("ceremony card insert failed: \(error)") }
+        conversation.insert(message) { [weak self] error in
+            if let error { NSLog("ceremony card insert failed: \(error)"); return }
+            // Collapse so the staged card + Send button are visible; the pot
+            // detail (expanded) would otherwise bury the compose field.
+            Task { @MainActor in self?.requestCompact() }
         }
     }
 
     func requestExpanded() {
         guard presentationStyle != .expanded else { return }
         controller?.requestPresentationStyle(.expanded)
+    }
+
+    /// Collapse to compact so the transcript + compose field (with a staged
+    /// card) are visible — the user still has to tap iMessage's Send.
+    func requestCompact() {
+        guard presentationStyle != .compact else { return }
+        controller?.requestPresentationStyle(.compact)
     }
 
     /// Bounces the user into the container app (passkey ceremonies run
