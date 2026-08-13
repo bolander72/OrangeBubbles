@@ -37,36 +37,16 @@ struct VaultTestRunnerView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Vault Test Runner").font(.headline)
             if let c = model.coordinator {
-                Text("Member \(c.config.memberIndex) of \(c.config.memberCount), k=\(c.config.threshold)")
-                    .font(.caption).foregroundStyle(.secondary)
-                statusLine(c)
-                if let addr = c.vaultAddress {
-                    Text(addr).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
-                    Text("Balance: \(c.balanceSats) sats").font(.caption)
-                }
-                Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(c.log.enumerated().reversed()), id: \.offset) { _, l in
-                            Text(l).font(.system(size: 11, design: .monospaced))
-                        }
-                    }
-                }
+                // Observe the coordinator DIRECTLY so its stage/address updates
+                // reach the view (a nested ObservableObject held by the Model
+                // does not forward objectWillChange).
+                RunnerStatus(coordinator: c)
             } else {
                 Text("No launch config").foregroundStyle(.red)
             }
         }
         .padding()
         .task { await model.start() }
-    }
-
-    private func statusLine(_ c: VaultCoordinator) -> some View {
-        switch c.stage {
-        case .idle: return Text("idle")
-        case .dkgInProgress(let s): return Text("DKG: \(s)").foregroundStyle(.orange)
-        case .ready: return Text("READY ✓").foregroundStyle(.green)
-        case .error(let e): return Text("ERR: \(e)").foregroundStyle(.red)
-        }
     }
 
     @MainActor final class Model: ObservableObject {
@@ -91,6 +71,40 @@ struct VaultTestRunnerView: View {
                 coordinator = c
                 await c.start()
             }
+        }
+    }
+}
+
+/// Observes the coordinator directly so live DKG progress renders.
+private struct RunnerStatus: View {
+    @ObservedObject var coordinator: VaultCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Member \(coordinator.config.memberIndex) of \(coordinator.config.memberCount), k=\(coordinator.config.threshold)")
+                .font(.caption).foregroundStyle(.secondary)
+            statusLine
+            if let addr = coordinator.vaultAddress {
+                Text(addr).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
+                Text("Balance: \(coordinator.balanceSats) sats").font(.caption)
+            }
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(coordinator.log.enumerated().reversed()), id: \.offset) { _, l in
+                        Text(l).font(.system(size: 11, design: .monospaced))
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var statusLine: some View {
+        switch coordinator.stage {
+        case .idle: Text("idle")
+        case .dkgInProgress(let s): Text("DKG: \(s)").foregroundStyle(.orange)
+        case .ready: Text("READY ✓").foregroundStyle(.green)
+        case .error(let e): Text("ERR: \(e)").foregroundStyle(.red)
         }
     }
 }
