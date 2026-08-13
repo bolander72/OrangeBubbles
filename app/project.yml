@@ -76,6 +76,7 @@ targets:
           - iCloud.com.bolandcompany.orangebubbles
         com.apple.developer.icloud-services:
           - CloudDocuments
+          - CloudKit
         com.apple.developer.associated-domains:
           - webcredentials:www.boland.co
           # developer-mode entry: lets dev builds bypass Apple's AASA CDN
@@ -130,6 +131,7 @@ targets:
           - iCloud.com.bolandcompany.orangebubbles
         com.apple.developer.icloud-services:
           - CloudDocuments
+          - CloudKit
         com.apple.developer.associated-domains:
           - webcredentials:www.boland.co
           # developer-mode entry: lets dev builds bypass Apple's AASA CDN

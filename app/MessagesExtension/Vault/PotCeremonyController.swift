@@ -1,80 +1,79 @@
 import Foundation
 import WalletKit
 
-/// Drives a pot ceremony over **real iMessage** (no server). It owns the active
-/// `VaultCoordinator` wired to an `IMessageTransport`, turns the coordinator's
-/// outgoing messages into the evolving ceremony card (via `ExtensionBridge`),
-/// and feeds tapped/received cards back in. Member slots come from the chat's
-/// participant order — deterministic and collision-free, no negotiation.
+/// Drives a pot ceremony over **CloudKit** (no server we run; no cards sent
+/// back). The creator sends ONE iMessage invite card; everyone else just taps
+/// it to join. Each member's DKG rounds sync silently over the pot's CloudKit
+/// record. Member slots come from the chat's participant order — deterministic
+/// and collision-free, no negotiation.
 @MainActor
 final class PotCeremonyController: ObservableObject {
     /// The active pot's coordinator — present the pot UI when non-nil.
     @Published private(set) var coordinator: VaultCoordinator?
+    /// Whether the local user can use CloudKit (signed into iCloud). Pots are
+    /// an all-iMessage/Apple-ecosystem feature; without this we don't offer it.
+    @Published private(set) var cloudAvailable = false
 
     private let store: WalletStore
     private let bridge: ExtensionBridge
-    private var transport: IMessageTransport?
-    private var meta: (vaultID: String, name: String, emoji: String, n: UInt16, k: UInt16)?
+    private var activeVaultID: String?
 
     init(store: WalletStore, bridge: ExtensionBridge) {
         self.store = store
         self.bridge = bridge
-        bridge.onCeremonyCard = { [weak self] card in self?.receive(card) }
+        bridge.onPotInvite = { [weak self] invite in self?.join(invite) }
+        Task { await refreshCloudStatus() }
     }
 
-    /// True when we're in a chat that can host a pot.
-    var canStart: Bool { bridge.memberSlot != nil }
+    func refreshCloudStatus() async {
+        cloudAvailable = await CloudKitTransport.accountAvailable()
+    }
 
-    /// Start a brand-new pot in the current chat. Approval defaults to "any 2".
+    /// True when we're in a chat that can host a pot AND CloudKit is usable.
+    var canStart: Bool { bridge.memberSlot != nil && cloudAvailable }
+
+    /// Create a new pot in the current chat: start our DKG over CloudKit and
+    /// drop the single invite card for everyone else to tap. Approval defaults
+    /// to "any 2".
     func create(name: String, emoji: String) {
-        guard let slot = bridge.memberSlot, let seed = store.debugMnemonic else { return }
-        let vaultID = "pot-\(UUID().uuidString.prefix(8))"
+        guard let slot = bridge.memberSlot, cloudAvailable else { return }
+        let vaultID = "pot-\(UUID().uuidString.prefix(12))"
         let k = UInt16(min(2, Int(slot.count)))
         start(vaultID: vaultID, name: name, emoji: emoji,
-              index: slot.index, n: slot.count, k: k, seed: seed, initial: nil)
+              index: slot.index, n: slot.count, k: k)
+        bridge.insertInviteCard(for: PotInvite(
+            vaultID: vaultID, name: name, emoji: emoji,
+            memberCount: slot.count, threshold: k, relayHost: ""))
     }
 
-    /// A ceremony card was tapped/received: join it (if new) or ingest its state.
-    func receive(_ card: PotCeremonyCard) {
-        guard let seed = store.debugMnemonic else { return }
-        if coordinator != nil, meta?.vaultID == card.vaultID {
-            transport?.ingest(card.messages)
-            return
-        }
-        guard let slot = bridge.memberSlot else { return }
-        start(vaultID: card.vaultID, name: card.name, emoji: card.emoji,
-              index: slot.index, n: card.memberCount, k: card.threshold,
-              seed: seed, initial: card.messages)
+    /// A member tapped the invite card: start our DKG over CloudKit. Nothing is
+    /// sent back — our round syncs through the pot's CloudKit record.
+    private func join(_ invite: PotInvite) {
+        guard coordinator == nil || activeVaultID != invite.vaultID else { return }
+        guard let slot = bridge.memberSlot, cloudAvailable else { return }
+        start(vaultID: invite.vaultID, name: invite.name, emoji: invite.emoji,
+              index: slot.index, n: invite.memberCount, k: invite.threshold)
     }
 
     /// Leave the active pot view (keeps the persisted vault).
-    func close() { coordinator = nil; transport = nil; meta = nil }
+    func close() { coordinator = nil; activeVaultID = nil }
 
     private func start(vaultID: String, name: String, emoji: String,
-                       index: UInt16, n: UInt16, k: UInt16, seed: String,
-                       initial: [[String: Any]]?) {
-        let t = IMessageTransport()
+                       index: UInt16, n: UInt16, k: UInt16) {
+        guard let seed = store.debugMnemonic else { return }
         // Per-member seed derivation: incorporates the index, so members get
         // distinct entropy whether or not their wallet seeds differ (true on
-        // real devices; identical in the Simulator harness). Trustless either
-        // way — each member's share stays on their own device.
+        // real devices). Trustless — each member's share stays on their device.
         let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: Int(index))
         let cfg = VaultCoordinator.Config(vaultID: vaultID, name: name, memberIndex: index,
                                           memberCount: n, threshold: k, emoji: emoji)
-        guard let c = try? VaultCoordinator(config: cfg, transport: t,
+        guard let c = try? VaultCoordinator(config: cfg, transport: CloudKitTransport(),
                                             chain: store.chain, mnemonic: memberSeed) else { return }
         let chat = bridge.chatKey
         let vs = VaultStore()
         c.onVaultReady = { r in var rec = r; rec.chatKey = chat; vs.save(rec) }
-        t.onOutgoing = { [weak self] msgs in
-            self?.bridge.updateCeremonyCard(
-                PotCeremonyCard(vaultID: vaultID, name: name, emoji: emoji,
-                                memberCount: n, threshold: k, messages: msgs))
-        }
-        transport = t
-        meta = (vaultID, name, emoji, n, k)
+        activeVaultID = vaultID
         coordinator = c
-        if let initial { t.ingest(initial) }   // catch up on the card's state
         Task { await c.start() }
     }
 }

@@ -56,51 +56,53 @@ final class ExtensionBridge: ObservableObject {
         return (UInt16(pos + 1), UInt16(ids.count))
     }
 
-    // MARK: - Pot ceremony card (serverless FROST over iMessage)
+    // MARK: - Pot invite card
 
-    /// One MSSession per pot so the ceremony stays a single evolving bubble.
-    private var ceremonySessions: [String: MSSession] = [:]
-    /// The app sets this to route an incoming/tapped ceremony card to the
-    /// active pot controller. If a card arrives before the controller exists
-    /// (cold start straight into a tapped card), it's buffered and delivered
-    /// as soon as the handler is set.
-    var onCeremonyCard: ((PotCeremonyCard) -> Void)? {
+    /// The invite card is a SEND-ONCE human touchpoint ("Join our pot"). The
+    /// DKG/signing rounds do NOT ride cards back and forth — they sync over
+    /// CloudKit (see CloudKitTransport). Tapping the card just opens the pot to
+    /// join; nobody ever sends a card back.
+    ///
+    /// The app sets this to route a tapped invite to the active pot controller.
+    /// Buffered for cold start (tapping a card launches the extension before the
+    /// controller exists).
+    var onPotInvite: ((PotInvite) -> Void)? {
         didSet {
-            if let card = pendingCeremonyCard, let handler = onCeremonyCard {
-                pendingCeremonyCard = nil
-                handler(card)
+            if let invite = pendingInvite, let handler = onPotInvite {
+                pendingInvite = nil
+                handler(invite)
             }
         }
     }
-    private var pendingCeremonyCard: PotCeremonyCard?
+    private var pendingInvite: PotInvite?
 
-    private func routeCeremony(_ card: PotCeremonyCard) {
-        if let handler = onCeremonyCard { handler(card) } else { pendingCeremonyCard = card }
+    private func routeInvite(_ invite: PotInvite) {
+        if let handler = onPotInvite { handler(invite) } else { pendingInvite = invite }
     }
 
-    /// Insert/update the pot's evolving ceremony card with the latest state.
-    /// The user taps send — we never auto-send.
-    func updateCeremonyCard(_ card: PotCeremonyCard) {
-        guard let conversation, let url = card.url() else { return }
-        let session = ceremonySessions[card.vaultID]
-            ?? conversation.selectedMessage?.session
-            ?? MSSession()
-        ceremonySessions[card.vaultID] = session
+    /// Insert the "Join our pot" invite card into the compose field. Sent once
+    /// by the creator; the user taps iMessage's Send. We never auto-send, and
+    /// there is never a card to send *back*.
+    func insertInviteCard(for invite: PotInvite) {
+        guard let conversation else { return }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "www.boland.co"
+        components.path = "/pot"
+        components.queryItems = invite.queryItems()
 
         let layout = MSMessageTemplateLayout()
-        layout.caption = "\(card.emoji) \(card.name)"
-        layout.subcaption = card.messages.isEmpty
-            ? "Tap to start the pot" : "Tap to join · \(card.ruleLine)"
+        layout.caption = "\(invite.emoji) \(invite.name)"
+        layout.subcaption = "Tap to join · \(invite.ruleLine)"
         layout.trailingCaption = "Tap"
 
-        let message = MSMessage(session: session)
-        message.url = url
+        let message = MSMessage(session: MSSession())
+        message.url = components.url
         message.layout = layout
         message.summaryText = "🍯 Shared pot"
         conversation.insert(message) { [weak self] error in
-            if let error { NSLog("ceremony card insert failed: \(error)"); return }
-            // Collapse so the staged card + Send button are visible; the pot
-            // detail (expanded) would otherwise bury the compose field.
+            if let error { NSLog("pot invite insert failed: \(error)"); return }
+            // Collapse so the staged card + Send button are visible.
             Task { @MainActor in self?.requestCompact() }
         }
     }
@@ -204,12 +206,11 @@ final class ExtensionBridge: ObservableObject {
         selectedSession = message.session
 
         switch components.path {
-        case PotCeremonyCard.path:
-            // Keep the pot's evolving bubble on the same session so our updates
-            // replace it in place, then hand the card to the pot controller.
-            if let url = message.url, let card = PotCeremonyCard(url: url) {
-                ceremonySessions[card.vaultID] = message.session
-                routeCeremony(card)
+        case "/pot":
+            // Tapping the invite opens the pot to join — the rounds sync over
+            // CloudKit, so there is nothing to send back.
+            if let items = components.queryItems, let invite = PotInvite(queryItems: items) {
+                routeInvite(invite)
             }
             requestExpanded()
             return
