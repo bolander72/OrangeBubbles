@@ -84,8 +84,10 @@ final class IMessageTransport: VaultTransport {
     // MARK: VaultTransport
 
     func post(vaultID: String, message: [String: Any]) async throws {
-        _ = merge([message])
-        onOutgoing?(ordered())
+        // Only surface a card to send when this actually adds something new.
+        // Re-posting a round we already contributed (e.g. tapping our own
+        // already-sent card) must NOT re-stage a duplicate card to send.
+        if merge([message]) { onOutgoing?(ordered()) }
     }
 
     func fetch(vaultID: String) async throws -> [[String: Any]] { ordered() }
