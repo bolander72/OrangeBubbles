@@ -21,11 +21,13 @@ localize() { # target arch platform min
 localize aarch64-apple-ios arm64 ios 12.0
 localize aarch64-apple-ios-sim arm64 ios-simulator 14.0
 localize aarch64-apple-darwin arm64 macos 13.0
+localize aarch64-apple-ios-macabi arm64 mac-catalyst 14.0   # Messages on Mac
 rm -rf OBFrostFFI.xcframework
 xcodebuild -create-xcframework \
   -library target/aarch64-apple-ios/release/libobfrost.a -headers Headers \
   -library target/aarch64-apple-ios-sim/release/libobfrost.a -headers Headers \
   -library target/aarch64-apple-darwin/release/libobfrost.a -headers Headers \
+  -library target/aarch64-apple-ios-macabi/release/libobfrost.a -headers Headers \
   -output OBFrostFFI.xcframework >/dev/null
 cp bindings/obfrost.swift ../app/WalletKit/Sources/OBFrost/OBFrost.swift
 rm -rf ../app/WalletKit/OBFrostFFI.xcframework

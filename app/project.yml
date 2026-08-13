@@ -12,6 +12,11 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     # Set your Apple Developer team here (or in Xcode) to run on device.
     DEVELOPMENT_TEAM: B28G4GL96T
+    # Mac Catalyst — lets OrangeBubbles run in Messages on Mac. Keep bundle IDs
+    # identical across iOS and Catalyst so the Messages extension still matches
+    # its host app. Native deps (FROST, BDK) carry maccatalyst xcframework slices.
+    SUPPORTS_MACCATALYST: "YES"
+    DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: "NO"
   configs:
     debug:
       # Debug builds run on signet (Mutinynet) — free test coins.
