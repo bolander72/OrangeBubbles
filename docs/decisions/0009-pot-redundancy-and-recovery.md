@@ -1,8 +1,14 @@
 # ADR 0009: Pot redundancy & recovery — surviving lost phones and departed members
 
-**Status:** proposed (2026-08) — closes a real gap: pot key shares are
-currently device-only (not backed up), and there is no way to change a pot's
-membership after creation.
+**Status:** in progress (2026-08). Built: Layer 1 (iCloud-Keychain share
+backup, opt-in device-only), the health model + warning card, Archive/Rejoin
+(the everyday action — silent, reversible, keeps the share), and a Refresh entry
+point that re-keys the chat's current members. Remaining: the automatic
+**old→new sweep** on Refresh (moves real money, device-only to verify — a manual
+Spend covers it for now), and liveness/`lastSeen` staleness detection (departure
+is currently signalled by an explicit `.left` broadcast). Membership stays
+chat-derived per the roster philosophy — to exclude someone they leave the chat,
+then Refresh.
 
 ## 0. The problem, concretely
 

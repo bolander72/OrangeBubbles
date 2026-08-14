@@ -225,7 +225,10 @@ struct HomeView: View {
 
             Spacer(minLength: 0)
         }
-        .sheet(isPresented: $showPots) { PotsView(store: store, chatKey: bridge.chatKey, chatParticipantCount: bridge.chatParticipantCount) }
+        .sheet(isPresented: $showPots) {
+            PotsView(store: store, chatKey: bridge.chatKey, chatParticipantCount: bridge.chatParticipantCount,
+                     onRefresh: { record in showPots = false; ceremony.refresh(from: record) })
+        }
         .sheet(isPresented: $showStartPot) {
             StartPotSheet { name, emoji in ceremony.create(name: name, emoji: emoji) }
         }

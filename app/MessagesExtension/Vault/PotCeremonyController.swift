@@ -76,6 +76,16 @@ final class PotCeremonyController: ObservableObject {
         presentSetup = true
     }
 
+    /// Rebuild redundancy (ADR 0009): start a FRESH pot for the chat's *current*
+    /// members (a re-key) so a departed member is dropped and the backup buffer
+    /// returns. Membership stays chat-derived — to exclude someone, they leave
+    /// the chat, then Refresh. NOTE: moving the funds old→new is still a manual
+    /// Spend for now; auto-sweep is a follow-up (it moves real money and is
+    /// device-only to verify).
+    func refresh(from old: VaultRecord) {
+        create(name: old.name, emoji: old.emoji ?? "🍯")
+    }
+
     /// Finish any ceremonies left in-progress (e.g. the creator's later round
     /// after a joiner contributed while the app was closed).
     func resumePending() {

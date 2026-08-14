@@ -14,6 +14,9 @@ struct PotsView: View {
     var chatKey: String? = nil
     /// People in the current chat, for deriving pot size automatically.
     var chatParticipantCount: Int = 0
+    /// Rebuild redundancy: re-key the chat's current members (handled by the
+    /// ceremony controller in HomeView, which can start a new pot).
+    var onRefresh: ((VaultRecord) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     private let vaultStore = VaultStore()
@@ -27,7 +30,12 @@ struct PotsView: View {
                 if let c = active {
                     PotDetailView(store: store, coordinator: c, chatParticipantCount: chatParticipantCount,
                                   onBack: { active = nil; reload() },
-                                  onArchive: { archive(c) })
+                                  onArchive: { archive(c) },
+                                  onRefresh: onRefresh == nil ? nil : {
+                                      if let rec = vaultStore.all().first(where: { $0.vaultID == c.config.vaultID }) {
+                                          onRefresh?(rec)
+                                      }
+                                  })
                 } else {
                     home
                 }
