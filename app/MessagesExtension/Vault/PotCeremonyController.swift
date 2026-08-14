@@ -103,11 +103,11 @@ final class PotCeremonyController: ObservableObject {
     /// Build a fresh-DKG coordinator with persistence hooks wired.
     private func spawn(vaultID: String, name: String, emoji: String,
                        index: UInt16, n: UInt16, k: UInt16) -> VaultCoordinator? {
-        guard let seed = store.debugMnemonic else { return nil }
+        guard let seed = store.walletMnemonic else { return nil }
         // Per-member seed: incorporates the index, so members get distinct
         // entropy whether or not their wallet seeds differ. Trustless — each
         // member's share stays on their device.
-        let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: Int(index))
+        let memberSeed = PotMemberSeeds.seed(base: seed, memberIndex: Int(index))
         let cfg = VaultCoordinator.Config(vaultID: vaultID, name: name, memberIndex: index,
                                           memberCount: n, threshold: k, emoji: emoji)
         guard let c = try? VaultCoordinator(config: cfg, transport: CloudKitTransport(),

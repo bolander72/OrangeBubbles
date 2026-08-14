@@ -218,8 +218,8 @@ struct VaultLabView: View {
     }
 
     private func startDKG() {
-        guard let seed = store.debugMnemonic, let t = transport(host: relayHost) else { return }
-        let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: memberIndex)
+        guard let seed = store.walletMnemonic, let t = transport(host: relayHost) else { return }
+        let memberSeed = PotMemberSeeds.seed(base: seed, memberIndex: memberIndex)
         let config = VaultCoordinator.Config(
             vaultID: vaultID, name: vaultID, memberIndex: UInt16(memberIndex),
             memberCount: UInt16(memberCount), threshold: UInt16(threshold))
@@ -235,19 +235,12 @@ struct VaultLabView: View {
     }
 
     private func resume(_ record: VaultRecord) {
-        guard let seed = store.debugMnemonic,
+        guard let seed = store.walletMnemonic,
               let t = transport(host: record.relayHost ?? relayHost) else { return }
-        let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: Int(record.memberIndex))
+        let memberSeed = PotMemberSeeds.seed(base: seed, memberIndex: Int(record.memberIndex))
         guard let c = try? VaultCoordinator(resuming: record, transport: t, chain: store.chain, mnemonic: memberSeed) else { return }
         coordinator = c
         Task { await c.resume() }
     }
 }
 
-/// Derives distinct per-member mnemonics from one base seed so the same
-/// physical device can stand in for different members during testing.
-enum FrostTestSeeds {
-    static func seed(base: String, memberIndex: Int) -> String {
-        (try? WalletEngine.deterministicMnemonic(from: "\(base)#frost-member-\(memberIndex)")) ?? base
-    }
-}

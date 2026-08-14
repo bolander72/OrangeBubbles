@@ -196,7 +196,7 @@ struct CreatePotView: View {
     }
 
     private func start() {
-        guard let seed = store.debugMnemonic else { return }
+        guard let seed = store.walletMnemonic else { return }
         let id = vaultID.isEmpty ? "pot-\(UUID().uuidString.prefix(8))" : vaultID
         let threshold = rule.threshold(of: people)
         let host = relayHost
@@ -205,7 +205,7 @@ struct CreatePotView: View {
             vaultID: id, name: name.trimmingCharacters(in: .whitespaces),
             memberIndex: UInt16(memberIndex), memberCount: UInt16(people),
             threshold: UInt16(threshold), emoji: emoji)
-        let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: memberIndex)
+        let memberSeed = PotMemberSeeds.seed(base: seed, memberIndex: memberIndex)
         guard let c = try? VaultCoordinator(config: cfg, transport: DebugRelayTransport(baseURL: url),
                                             chain: store.chain, mnemonic: memberSeed) else { return }
         let vs = VaultStore()

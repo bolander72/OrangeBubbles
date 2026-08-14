@@ -14,7 +14,7 @@ struct PendingCeremony: Codable, Identifiable, Equatable {
     let memberCount: UInt16
     let threshold: UInt16
     let chatKey: String?
-    /// Member's per-index seed (FrostTestSeeds.seed(base:index:)) — lets the
+    /// Member's per-index seed (PotMemberSeeds.seed(base:index:)) — lets the
     /// background handler resume without touching wallet secrets.
     let memberSeed: String
     var sessionData: Data

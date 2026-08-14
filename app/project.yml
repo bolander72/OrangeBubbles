@@ -22,7 +22,10 @@ settings:
       # Debug builds run on signet (Mutinynet) — free test coins.
       WALLET_NETWORK: signet
     release:
-      WALLET_NETWORK: bitcoin
+      # TestFlight beta runs on signet — testers use free test-sats
+      # (signetfaucet.com) while FROST pots are still experimental.
+      # Flip back to `bitcoin` for the real launch.
+      WALLET_NETWORK: signet
 
 packages:
   WalletKit:
@@ -53,6 +56,10 @@ targets:
       path: HostApp/Info.plist
       properties:
         CFBundleDisplayName: OrangeBubbles
+        # BackgroundCeremonyResumer picks its chain from this key; without it
+        # the host app silently falls back to a compile-time default that can
+        # disagree with the extension's network.
+        WalletNetwork: $(WALLET_NETWORK)
         CFBundleURLTypes:
           - CFBundleURLName: com.bolandcompany.orangebubbles
             CFBundleURLSchemes:

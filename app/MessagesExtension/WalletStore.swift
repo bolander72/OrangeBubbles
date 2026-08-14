@@ -568,10 +568,10 @@ final class WalletStore: ObservableObject {
         backupInICloud = inICloud
     }
 
-    #if DEBUG
-        /// The current wallet mnemonic, for the vault test lab only.
-        var debugMnemonic: String? { secrets?.mnemonic }
-    #endif
+    /// The current wallet mnemonic. Pots derive each member's FROST seed
+    /// from it (see PotMemberSeeds), so this is needed in all
+    /// configurations — not just the DEBUG vault lab.
+    var walletMnemonic: String? { secrets?.mnemonic }
 
     // MARK: - Helpers
 

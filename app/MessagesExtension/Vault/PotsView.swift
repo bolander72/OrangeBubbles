@@ -180,8 +180,8 @@ struct PotsView: View {
     }
 
     private func resume(_ record: VaultRecord) {
-        guard let seed = store.debugMnemonic else { return }
-        let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: Int(record.memberIndex))
+        guard let seed = store.walletMnemonic else { return }
+        let memberSeed = PotMemberSeeds.seed(base: seed, memberIndex: Int(record.memberIndex))
         // Resumed pots watch for spends + departures over CloudKit (the shipping
         // transport), not the dev relay.
         guard let c = try? VaultCoordinator(resuming: record, transport: CloudKitTransport(),
