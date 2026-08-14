@@ -9,9 +9,15 @@ struct PotDetailView: View {
     /// People in the current chat — used to frame members as "your group".
     var chatParticipantCount: Int = 0
     let onBack: () -> Void
+    /// Archive the pot: hide it locally, keep the share, rejoin anytime. Silent
+    /// and always safe — you remain a backup signer (ADR 0009).
+    var onArchive: (() -> Void)? = nil
+    /// Rebuild redundancy: start a fresh pot + move the funds over (ADR 0009).
+    var onRefresh: (() -> Void)? = nil
 
     @State private var showAdd = false
     @State private var showSpend = false
+    @State private var confirmArchive = false
 
     /// Every pot in a chat shares the same people, so we frame members as the
     /// chat's group rather than a per-pot roster.
@@ -22,15 +28,23 @@ struct PotDetailView: View {
             VStack(spacing: 18) {
                 header
                 balanceCard
+                if coordinator.redundancyBuffer <= 0 { healthCard }
                 actionRow
                 membersCard
                 if coordinator.spendStatus != .none { spendStatusCard }
                 if let p = coordinator.pendingProposal, !isProposerBusy { incomingRequestCard(p) }
                 activityCard
+                if onArchive != nil { archiveButton }
             }
             .padding(20)
         }
         .refreshable { await coordinator.refreshBalance() }
+        .confirmationDialog("Archive this pot?", isPresented: $confirmArchive, titleVisibility: .visible) {
+            Button("Archive pot") { onArchive?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It moves to Archived and stops showing here. Your share stays on this phone — you're still a backup signer, and you can rejoin anytime.")
+        }
         .sheet(isPresented: $showAdd) { AddMoneySheet(coordinator: coordinator, store: store) }
         .sheet(isPresented: $showSpend) { SpendSheet(coordinator: coordinator, store: store) }
         .task { await coordinator.refreshBalance() }
@@ -44,6 +58,41 @@ struct PotDetailView: View {
             Text(inGroupChat ? "Shared with everyone in this chat" : "Shared with your group")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    // MARK: - Pot health (ADR 0009)
+
+    /// Shown when the redundancy buffer is gone (someone left) or the pot is
+    /// unspendable. Plain language — no "threshold" jargon.
+    private var healthCard: some View {
+        let frozen = coordinator.redundancyBuffer < 0
+        return VStack(alignment: .leading, spacing: 10) {
+            Label(frozen ? "This pot is stuck" : "No backup left",
+                  systemImage: frozen ? "lock.fill" : "exclamationmark.triangle.fill")
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(frozen ? .red : Brand.orangeDeep)
+            Text(frozen
+                 ? "Too many people have left — there aren't enough left to move the money. You'll need someone who left to come back and help once."
+                 : "Someone stepped out, so there's no spare signer. If one more person loses their phone, the money could get stuck. Move it to a fresh pot with the people who are still active.")
+                .font(.caption).foregroundStyle(.secondary)
+            if !frozen, onRefresh != nil {
+                Button { onRefresh?() } label: {
+                    Label("Refresh pot", systemImage: "arrow.triangle.2.circlepath").frame(maxWidth: .infinity)
+                }.buttonStyle(ProminentButtonStyle())
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill((frozen ? Color.red : Brand.orange).opacity(0.12)))
+    }
+
+    private var archiveButton: some View {
+        Button { confirmArchive = true } label: {
+            Label("Archive pot", systemImage: "archivebox")
+                .font(.system(.subheadline, design: .rounded))
+        }
+        .padding(.top, 4)
     }
 
     private var balanceCard: some View {

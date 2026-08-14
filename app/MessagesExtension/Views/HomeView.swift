@@ -17,7 +17,7 @@ struct HomeView: View {
     @State private var showSend = false
     @State private var showSettings = false
     @State private var showPots = false
-    private var pots: [VaultRecord] { VaultStore().all() }
+    private var pots: [VaultRecord] { VaultStore().all().filter { !$0.archived } }
     /// Every pot bound to the chat the app is currently open in.
     private var chatPots: [VaultRecord] {
         guard let key = bridge.chatKey else { return [] }

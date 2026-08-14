@@ -25,7 +25,9 @@ struct PotsView: View {
         NavigationStack {
             Group {
                 if let c = active {
-                    PotDetailView(store: store, coordinator: c, chatParticipantCount: chatParticipantCount, onBack: { active = nil; reload() })
+                    PotDetailView(store: store, coordinator: c, chatParticipantCount: chatParticipantCount,
+                                  onBack: { active = nil; reload() },
+                                  onArchive: { archive(c) })
                 } else {
                     home
                 }
@@ -51,10 +53,10 @@ struct PotsView: View {
     private var home: some View {
         ScrollView {
             VStack(spacing: 16) {
-                if saved.isEmpty {
+                if sortedForChat.isEmpty && archivedPots.isEmpty {
                     emptyState
                 } else {
-                    if let chatKey, saved.contains(where: { $0.chatKey == chatKey }) {
+                    if let chatKey, sortedForChat.contains(where: { $0.chatKey == chatKey }) {
                         Text("In this chat")
                             .font(.system(.caption, design: .rounded).weight(.semibold))
                             .foregroundStyle(.secondary).textCase(.uppercase)
@@ -66,6 +68,7 @@ struct PotsView: View {
                                 onTap: { resume(record) },
                                 onDelete: { remove(record) })
                     }
+                    if !archivedPots.isEmpty { archivedSection }
                 }
                 Button {
                     showCreate = true
@@ -94,11 +97,41 @@ struct PotsView: View {
         .padding(.bottom, 8)
     }
 
-    /// Pots in this chat float to the top so the relevant one is obvious.
-    private var sortedForChat: [VaultRecord] {
-        guard let chatKey else { return saved }
-        return saved.sorted { ($0.chatKey == chatKey ? 0 : 1) < ($1.chatKey == chatKey ? 0 : 1) }
+    private var archivedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Archived")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(.secondary).textCase(.uppercase)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+            ForEach(archivedPots) { record in
+                HStack(spacing: 12) {
+                    Text(record.emoji ?? potEmoji(for: record.name))
+                        .font(.system(size: 24)).frame(width: 44, height: 44)
+                        .background(Circle().fill(Color(.tertiarySystemFill)))
+                        .opacity(0.7)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(record.name).font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        Text("Archived · share kept").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Rejoin") { rejoin(record) }
+                        .font(.system(.caption, design: .rounded).weight(.bold))
+                        .buttonStyle(.borderedProminent).tint(Brand.orange)
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(.secondarySystemBackground)))
+            }
+        }
     }
+
+    /// Active (non-archived) pots, with the current chat's pots floated to top.
+    private var sortedForChat: [VaultRecord] {
+        let live = saved.filter { !$0.archived }
+        guard let chatKey else { return live }
+        return live.sorted { ($0.chatKey == chatKey ? 0 : 1) < ($1.chatKey == chatKey ? 0 : 1) }
+    }
+    private var archivedPots: [VaultRecord] { saved.filter { $0.archived } }
 
     private func reload() { saved = vaultStore.all() }
 
@@ -108,12 +141,38 @@ struct PotsView: View {
         reload()
     }
 
+    /// Archive = hide it, keep the share, rejoin anytime. Silent (ADR 0009).
+    private func archive(_ c: VaultCoordinator) {
+        if var rec = vaultStore.all().first(where: { $0.vaultID == c.config.vaultID }) {
+            rec.archived = true
+            vaultStore.save(rec)
+        }
+        active = nil
+        Haptics.tap()
+        reload()
+    }
+
+    private func rejoin(_ record: VaultRecord) {
+        var rec = record
+        rec.archived = false
+        vaultStore.save(rec)
+        reload()
+        resume(rec)
+    }
+
     private func resume(_ record: VaultRecord) {
-        guard let seed = store.debugMnemonic,
-              let url = URL(string: "http://\(record.relayHost ?? "127.0.0.1"):8781") else { return }
+        guard let seed = store.debugMnemonic else { return }
         let memberSeed = FrostTestSeeds.seed(base: seed, memberIndex: Int(record.memberIndex))
-        guard let c = try? VaultCoordinator(resuming: record, transport: DebugRelayTransport(baseURL: url),
+        // Resumed pots watch for spends + departures over CloudKit (the shipping
+        // transport), not the dev relay.
+        guard let c = try? VaultCoordinator(resuming: record, transport: CloudKitTransport(),
                                             chain: store.chain, mnemonic: memberSeed) else { return }
+        let vs = vaultStore
+        c.onInactiveChange = { inactive in
+            guard var rec = vs.all().first(where: { $0.vaultID == record.vaultID }) else { return }
+            rec.inactiveMembers = Array(inactive)
+            vs.save(rec)
+        }
         active = c
         Task { await c.resume() }
     }

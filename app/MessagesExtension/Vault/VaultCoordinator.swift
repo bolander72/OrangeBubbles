@@ -34,10 +34,31 @@ final class VaultCoordinator: ObservableObject {
     /// only for the "x of n joined" status; the real people are shown by
     /// iMessage itself in the chat.
     @Published private(set) var joined: Set<UInt16> = []
+    /// Members who have left / gone inactive (by index) — erodes the redundancy
+    /// buffer (ADR 0009). Drives the pot-health warning + Refresh nudge.
+    @Published private(set) var inactive: Set<UInt16> = []
     /// Plain-language, user-facing activity — never the crypto plumbing.
     @Published private(set) var activity: [String] = []
+    /// Fired when the inactive set changes, so the caller can persist it.
+    var onInactiveChange: ((Set<UInt16>) -> Void)?
     /// Test runners set this so a headless member auto-signs proposals.
     var autoApprove = false
+
+    /// Live signers (members who haven't left); redundancy buffer past threshold.
+    var liveCount: Int { Int(config.memberCount) - inactive.count }
+    var redundancyBuffer: Int { liveCount - Int(config.threshold) }
+
+    /// Broadcast that this device is leaving the pot (goes inactive). Others
+    /// record it and their health warning updates. The share stays on-device so
+    /// the member can still be asked for one last signature (ADR 0009).
+    func leave() async {
+        inactive.insert(config.memberIndex)
+        onInactiveChange?(inactive)
+        try? await post(.left, ["index": Int(config.memberIndex)])
+    }
+
+    /// Seed inactive members from a persisted record on resume.
+    func seedInactive(_ members: [UInt16]) { inactive.formUnion(members) }
 
     enum SpendStatus: Equatable {
         case none
@@ -100,6 +121,7 @@ final class VaultCoordinator: ObservableObject {
         self.publicKeyPackage = record.publicKeyPackage
         self.keyPackage = record.keyPackage
         self.vaultAddress = record.address
+        self.inactive = Set(record.inactiveMembers)
         self.stage = .ready
     }
 
@@ -202,6 +224,12 @@ final class VaultCoordinator: ObservableObject {
                 }
             case .announce:
                 if let idx = payload["index"] as? Int { joined.insert(UInt16(idx)) }
+            case .left:
+                if let idx = payload["index"] as? Int {
+                    inactive.insert(UInt16(idx))
+                    onInactiveChange?(inactive)
+                    event("Someone left the pot")
+                }
             }
         } catch {
             note("⚠️ \(error.localizedDescription)")

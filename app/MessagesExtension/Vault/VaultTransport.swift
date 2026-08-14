@@ -104,4 +104,5 @@ enum VaultMessageKind: String {
     case spendSigningSet // proposer fixes the canonical signer set + commitments
     case spendPartial   // a signer's partial signatures
     case spendBroadcast // final txid
+    case left           // a member is leaving/inactive (erodes redundancy) — ADR 0009
 }
