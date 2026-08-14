@@ -10,6 +10,8 @@ import WalletKit
 final class PotCeremonyController: ObservableObject {
     /// The active pot's coordinator — present the pot UI when non-nil.
     @Published private(set) var coordinator: VaultCoordinator?
+    /// Drives the "Joining…/Setting up…" sheet for someone who tapped Join.
+    @Published var presentSetup = false
     /// Whether the local user can use CloudKit (signed into iCloud). Pots are
     /// an all-iMessage/Apple-ecosystem feature; without this we don't offer it.
     @Published private(set) var cloudAvailable = false
@@ -53,7 +55,11 @@ final class PotCeremonyController: ObservableObject {
         guard let slot = bridge.memberSlot, cloudAvailable else { return }
         start(vaultID: invite.vaultID, name: invite.name, emoji: invite.emoji,
               index: slot.index, n: invite.memberCount, k: invite.threshold)
+        presentSetup = true   // show "Joining…" while the round syncs over CloudKit
     }
+
+    /// Dismiss the setup sheet (after it's ready, or if the user closes it).
+    func dismissSetup() { presentSetup = false; close() }
 
     /// Leave the active pot view (keeps the persisted vault).
     func close() { coordinator = nil; activeVaultID = nil }
