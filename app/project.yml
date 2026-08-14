@@ -39,6 +39,8 @@ targets:
       - path: MessagesExtension/Vault/VaultTransport.swift
       - path: MessagesExtension/Vault/VaultCoordinator.swift
       - path: MessagesExtension/Vault/VaultStore.swift
+      - path: MessagesExtension/Vault/CloudKitTransport.swift
+      - path: MessagesExtension/Vault/PendingCeremonyStore.swift
     dependencies:
       - target: MessagesExtension
       - target: WalletWidget
@@ -59,6 +61,10 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        # Silent CloudKit pushes wake the app to finish pot setup in the
+        # background (BackgroundCeremonyResumer).
+        UIBackgroundModes:
+          - remote-notification
         # iOS resolves an extension's privacy prompts through the
         # CONTAINING app — these must mirror the extension's strings or
         # camera/Face ID requests silently fail inside Messages.
@@ -70,6 +76,10 @@ targets:
     entitlements:
       path: HostApp/OrangeBubbles.entitlements
       properties:
+        # Silent push for background pot completion. Needs the Push
+        # Notifications capability enabled on the App ID (Xcode manages the
+        # dev/prod value); "development" here matches debug builds.
+        aps-environment: development
         com.apple.developer.icloud-container-identifiers:
           - iCloud.com.bolandcompany.orangebubbles
         com.apple.developer.ubiquity-container-identifiers:

@@ -6,6 +6,9 @@ import SwiftUI
 /// a Messages extension (see PasskeyOps).
 @main
 struct OrangeBubblesApp: App {
+    // Handles CloudKit silent pushes to finish pot setup in the background.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             #if DEBUG

@@ -29,6 +29,22 @@ final class CloudKitTransport: VaultTransport {
         return status == .available
     }
 
+    /// Ask CloudKit to silently push the container app when this pot's record
+    /// changes, so the creator's later round can finish while the app is closed
+    /// (see BackgroundCeremonyResumer). Best-effort; idempotent by subscriptionID.
+    /// NOTE: public-DB subscription predicate behavior needs on-device verification.
+    static func subscribe(vaultID: String) async throws {
+        let subscription = CKQuerySubscription(
+            recordType: "PotCeremony",
+            predicate: NSPredicate(format: "recordID == %@", CKRecord.ID(recordName: vaultID)),
+            subscriptionID: "pot-\(vaultID)",
+            options: [.firesOnRecordUpdate, .firesOnRecordCreation])
+        let info = CKSubscription.NotificationInfo()
+        info.shouldSendContentAvailable = true   // silent (content-available) push
+        subscription.notificationInfo = info
+        _ = try await CKContainer(identifier: containerID).publicCloudDatabase.save(subscription)
+    }
+
     static func key(_ m: [String: Any]) -> String {
         let kind = m["kind"] as? String ?? "?"
         let sender = m["sender"] as? Int ?? -1

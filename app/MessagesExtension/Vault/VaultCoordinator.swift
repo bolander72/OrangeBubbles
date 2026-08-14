@@ -59,10 +59,24 @@ final class VaultCoordinator: ObservableObject {
     private var publicKeyPackage: String?
     private var keyPackage: String?
     private var pollTask: Task<Void, Never>?
-    private var seenMessageCount = 0
+    /// Identity-based dedup (kind:sender:proposalID) — order-independent, unlike
+    /// a running count, so it survives resume over CloudKit (whose fetch order
+    /// isn't stable). A message is processed at most once.
+    private var seenKeys: Set<String> = []
 
     /// Called when DKG completes so the caller can persist the vault.
     var onVaultReady: ((VaultRecord) -> Void)?
+    /// Fired after every DKG state change with (encoded session, seen keys) so
+    /// the caller can persist the in-progress ceremony. Persisted together with
+    /// seenKeys AFTER the response is posted, so a crash mid-round resumes from a
+    /// consistent snapshot (re-feeding an unseen round re-derives it — the DKG
+    /// round messages are deterministic, so re-posting is idempotent).
+    var onDKGProgress: ((Data, [String]) -> Void)?
+
+    private func persistDKG() {
+        guard let dkg, let data = try? JSONEncoder().encode(dkg) else { return }
+        onDKGProgress?(data, Array(seenKeys))
+    }
 
     init(config: Config, transport: VaultTransport, chain: ChainConfig, mnemonic: String) throws {
         self.config = config
@@ -89,12 +103,38 @@ final class VaultCoordinator: ObservableObject {
         self.stage = .ready
     }
 
+    /// Resume an in-progress DKG (not yet complete): restore the persisted
+    /// session + which rounds we've already folded in, then keep going over the
+    /// transport. Lets a member close the app mid-setup and finish on reopen.
+    init(resumingDKG config: Config, sessionData: Data, seenKeys: [String],
+         transport: VaultTransport, chain: ChainConfig, mnemonic: String) throws {
+        self.config = config
+        self.transport = transport
+        self.chain = chain
+        self.mnemonic = mnemonic
+        self.identity = try FrostMemberIdentity(index: config.memberIndex, mnemonic: mnemonic)
+        self.dkg = try JSONDecoder().decode(FrostDKGSession.self, from: sessionData)
+        self.seenKeys = Set(seenKeys)
+        self.joined.insert(config.memberIndex)
+        self.stage = .dkgInProgress("Finishing setup…")
+    }
+
     /// Start participating for a resumed vault: begin polling for proposals.
     func resume() async {
         joined.insert(config.memberIndex)
         startPolling()
         try? await post(.announce, ["index": Int(config.memberIndex)])
         await refreshBalance()
+    }
+
+    /// Continue an in-progress DKG (paired with `init(resumingDKG:)`). Re-posts
+    /// our own round-1 (deterministic → idempotent) in case it never reached the
+    /// transport before we closed, then polls to finish.
+    func resumeDKG() async {
+        guard let dkg else { stage = .error("Lost setup state"); return }
+        try? await post(.announce, ["index": Int(config.memberIndex)])
+        try? await post(.dkgRound1, encode(dkg.round1Message()))
+        startPolling()
     }
 
     // MARK: - DKG
@@ -113,6 +153,7 @@ final class VaultCoordinator: ObservableObject {
             // Broadcast our round-1 package.
             let r1 = session.round1Message()
             try await post(.dkgRound1, encode(r1))
+            persistDKG()
             startPolling()
         } catch {
             stage = .error(error.localizedDescription)
@@ -129,10 +170,12 @@ final class VaultCoordinator: ObservableObject {
                     stage = .dkgInProgress("Exchanging shares…")
                     try await post(.dkgRound2, encode(r2))
                 }
+                persistDKG()   // session consumed a round-1 + posted our round-2
             case .dkgRound2:
                 guard let session = dkg else { return }
                 let msg: FrostDKGSession.Round2Message = try decode(payload)
                 let done = try session.receiveRound2(msg, identity: identity)
+                persistDKG()
                 if done { try finishDKG() }
             case .spendProposal:
                 let p: Proposal = try decode(payload)
@@ -369,13 +412,13 @@ final class VaultCoordinator: ObservableObject {
     private func poll() async {
         do {
             let messages = try await transport.fetch(vaultID: config.vaultID)
-            guard messages.count > seenMessageCount else { return }
-            let fresh = messages[seenMessageCount...]
-            seenMessageCount = messages.count
-            for m in fresh {
+            for m in messages {
                 guard let kindRaw = m["kind"] as? String, let kind = VaultMessageKind(rawValue: kindRaw),
                       let sender = m["sender"] as? Int, UInt16(sender) != config.memberIndex,
                       let payload = m["payload"] as? [String: Any] else { continue }
+                let mkey = "\(kindRaw):\(sender):\((payload["proposalID"] as? String) ?? "")"
+                if seenKeys.contains(mkey) { continue }
+                seenKeys.insert(mkey)   // mark seen BEFORE handling; persistDKG (in handle) snapshots it with the advanced session
                 await handle(kind, payload)
             }
         } catch { /* transient; keep polling */ }

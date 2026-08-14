@@ -37,6 +37,10 @@
 	<string>The camera is used to scan Bitcoin QR codes when sending a payment.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Face ID protects your Bitcoin wallet: it's required to send bitcoin and reveal your recovery phrase.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
