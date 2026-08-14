@@ -36,14 +36,16 @@ public struct ChainConfig: Sendable {
         explorerTxBase: URL(string: "https://mempool.space/tx")!
     )
 
-    /// Standard signet (mempool.space). Faucets: signetfaucet.com and
-    /// others — most are open, unlike Mutinynet's authenticated faucet.
-    /// Blocks average ~10 minutes. (No second public signet Esplora worth
-    /// trusting today; the failover list is a list of one.)
+    /// Standard signet. Faucets: signetfaucet.com and others — most are
+    /// open, unlike Mutinynet's authenticated faucet. Blocks average
+    /// ~10 minutes. Blockstream's signet Esplora is the failover:
+    /// mempool.space burst-throttles BDK scans (dozens of per-script
+    /// requests), which showed up as balance syncs hanging forever.
     public static let signet = ChainConfig(
         network: .signet,
         esploraURLs: [
-            URL(string: "https://mempool.space/signet/api")!
+            URL(string: "https://mempool.space/signet/api")!,
+            URL(string: "https://blockstream.info/signet/api")!,
         ],
         feesURL: URL(string: "https://mempool.space/signet/api/v1/fees/recommended")!,
         explorerTxBase: URL(string: "https://mempool.space/signet/tx")!

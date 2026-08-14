@@ -422,7 +422,14 @@ final class VaultCoordinator: ObservableObject {
     func refreshBalance() async {
         guard let key = vaultKeyHex else { return }
         let engine = FrostVaultEngine(vaultXonlyHex: key, network: chain.network)
-        balanceSats = (try? await engine.balance(esploraURL: chain.esploraURL)) ?? balanceSats
+        // Try each same-chain Esplora in order (mempool.space rate-limits;
+        // blockstream.info is the failover) rather than pinning to the first.
+        for url in chain.esploraURLs {
+            if let sats = try? await engine.balance(esploraURL: url) {
+                balanceSats = sats
+                return
+            }
+        }
     }
 
     // MARK: - Polling & transport plumbing
