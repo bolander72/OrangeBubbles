@@ -14,10 +14,13 @@ struct PotDetailView: View {
     var onArchive: (() -> Void)? = nil
     /// Rebuild redundancy: start a fresh pot + move the funds over (ADR 0009).
     var onRefresh: (() -> Void)? = nil
+    /// Destroy this device's share (irreversible). Guarded by a balance check.
+    var onDelete: (() -> Void)? = nil
 
     @State private var showAdd = false
     @State private var showSpend = false
     @State private var confirmArchive = false
+    @State private var confirmDelete = false
 
     /// Every pot in a chat shares the same people, so we frame members as the
     /// chat's group rather than a per-pot roster.
@@ -31,10 +34,10 @@ struct PotDetailView: View {
                 if coordinator.redundancyBuffer <= 0 { healthCard }
                 actionRow
                 membersCard
+                if onArchive != nil || onDelete != nil { manageCard }
                 if coordinator.spendStatus != .none { spendStatusCard }
                 if let p = coordinator.pendingProposal, !isProposerBusy { incomingRequestCard(p) }
                 activityCard
-                if onArchive != nil { archiveButton }
             }
             .padding(20)
         }
@@ -44,6 +47,15 @@ struct PotDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("It moves to Archived and stops showing here. Your share stays on this phone — you're still a backup signer, and you can rejoin anytime.")
+        }
+        .confirmationDialog(coordinator.balanceSats > 0 ? "There's still money in this pot" : "Delete this pot?",
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete pot anyway", role: .destructive) { onDelete?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(coordinator.balanceSats > 0
+                 ? "Deleting destroys your key share (here and in iCloud) — you can't undo it or rejoin, and the money could get stuck. Move it out first, or Archive to keep your share."
+                 : "This destroys your key share (here and in iCloud). It can't be undone and you can't rejoin. Archive instead if you might want back in.")
         }
         .sheet(isPresented: $showAdd) { AddMoneySheet(coordinator: coordinator, store: store) }
         .sheet(isPresented: $showSpend) { SpendSheet(coordinator: coordinator, store: store) }
@@ -87,12 +99,44 @@ struct PotDetailView: View {
             .fill((frozen ? Color.red : Brand.orange).opacity(0.12)))
     }
 
-    private var archiveButton: some View {
-        Button { confirmArchive = true } label: {
-            Label("Archive pot", systemImage: "archivebox")
-                .font(.system(.subheadline, design: .rounded))
+    /// Sits right under "Your group": the discoverable place to archive (hide,
+    /// keep your share, rejoin) or delete (destroy your share — guarded).
+    private var manageCard: some View {
+        VStack(spacing: 0) {
+            if onArchive != nil {
+                Button { confirmArchive = true } label: {
+                    manageRow(icon: "archivebox", title: "Archive pot",
+                              subtitle: "Hide it, keep your share, rejoin anytime")
+                }
+                .buttonStyle(.plain)
+            }
+            if onArchive != nil, onDelete != nil { Divider().padding(.leading, 52) }
+            if onDelete != nil {
+                Button { confirmDelete = true } label: {
+                    manageRow(icon: "trash", title: "Delete pot",
+                              subtitle: "Destroys your share — can't be undone", destructive: true)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .padding(.top, 4)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(.secondarySystemBackground)))
+    }
+
+    private func manageRow(icon: String, title: String, subtitle: String, destructive: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(destructive ? .red : .primary)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(destructive ? .red : .primary)
+                Text(subtitle).font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .contentShape(Rectangle())
     }
 
     private var balanceCard: some View {

@@ -35,6 +35,12 @@ struct PotsView: View {
                                       if let rec = vaultStore.all().first(where: { $0.vaultID == c.config.vaultID }) {
                                           onRefresh?(rec)
                                       }
+                                  },
+                                  onDelete: {
+                                      vaultStore.delete(vaultID: c.config.vaultID)
+                                      active = nil
+                                      Haptics.tap()
+                                      reload()
                                   })
                 } else {
                     home
@@ -74,6 +80,7 @@ struct PotsView: View {
                         PotCard(record: record,
                                 inThisChat: record.chatKey != nil && record.chatKey == chatKey,
                                 onTap: { resume(record) },
+                                onArchive: { archiveRecord(vaultID: record.vaultID) },
                                 onDelete: { remove(record) })
                     }
                     if !archivedPots.isEmpty { archivedSection }
@@ -151,11 +158,16 @@ struct PotsView: View {
 
     /// Archive = hide it, keep the share, rejoin anytime. Silent (ADR 0009).
     private func archive(_ c: VaultCoordinator) {
-        if var rec = vaultStore.all().first(where: { $0.vaultID == c.config.vaultID }) {
+        archiveRecord(vaultID: c.config.vaultID)
+        active = nil
+    }
+
+    /// Archive straight from the list (long-press), no open coordinator needed.
+    private func archiveRecord(vaultID: String) {
+        if var rec = vaultStore.all().first(where: { $0.vaultID == vaultID }) {
             rec.archived = true
             vaultStore.save(rec)
         }
-        active = nil
         Haptics.tap()
         reload()
     }
@@ -191,6 +203,7 @@ private struct PotCard: View {
     let record: VaultRecord
     var inThisChat: Bool = false
     let onTap: () -> Void
+    var onArchive: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
     @State private var confirmDelete = false
 
@@ -225,17 +238,20 @@ private struct PotCard: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            if onArchive != nil {
+                Button { onArchive?() } label: { Label("Archive pot", systemImage: "archivebox") }
+            }
             if onDelete != nil {
                 Button(role: .destructive) { confirmDelete = true } label: {
-                    Label("Remove pot", systemImage: "trash")
+                    Label("Delete pot", systemImage: "trash")
                 }
             }
         }
-        .confirmationDialog("Remove “\(record.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Remove pot", role: .destructive) { onDelete?() }
+        .confirmationDialog("Delete “\(record.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete pot", role: .destructive) { onDelete?() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the pot from this phone. Any bitcoin still in it stays safe — you'll need at least one other member to move it.")
+            Text("This destroys your key share (here and in iCloud) — it can't be undone and you can't rejoin. If there's money in the pot and the group needs you to sign, it could get stuck. Archive instead to keep your share.")
         }
     }
 
