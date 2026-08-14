@@ -160,7 +160,12 @@ struct SettingsView: View {
                             _ = try await prf.keyMaterial()
                             passkeyProbeResult = "✅ PASSKEY CEREMONY SUCCEEDED IN THE EXTENSION — the host-app redirect is unnecessary."
                         } catch {
-                            passkeyProbeResult = "❌ Failed in extension: \((error as NSError).domain) code \((error as NSError).code) — \(error.localizedDescription)"
+                            // EXPECTED to fail with code 1004 ("not associated with
+                            // domain") — iOS's association check misbehaves inside
+                            // Messages extensions even with a fully valid AASA (see
+                            // PasskeyOps.swift). This probe exists to notice if Apple
+                            // ever fixes it. A failure here is NOT a config bug.
+                            passkeyProbeResult = "❌ Failed in extension (EXPECTED — known iOS limitation, ceremonies run in the host app): \((error as NSError).domain) code \((error as NSError).code) — \(error.localizedDescription)"
                         }
                     }
                 } label: {
