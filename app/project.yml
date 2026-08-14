@@ -12,11 +12,11 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     # Set your Apple Developer team here (or in Xcode) to run on device.
     DEVELOPMENT_TEAM: B28G4GL96T
-    # Mac Catalyst — lets OrangeBubbles run in Messages on Mac. Keep bundle IDs
-    # identical across iOS and Catalyst so the Messages extension still matches
-    # its host app. Native deps (FROST, BDK) carry maccatalyst xcframework slices.
-    SUPPORTS_MACCATALYST: "YES"
-    DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: "NO"
+    # The FROST xcframework (OBFrostFFI) ships an arm64-only simulator slice, so
+    # simulator builds are arm64-only (fine — all Apple Silicon). This lets a
+    # `generic/platform=iOS Simulator` build (as CI uses) link without demanding
+    # a nonexistent x86_64 slice.
+    "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
   configs:
     debug:
       # Debug builds run on signet (Mutinynet) — free test coins.

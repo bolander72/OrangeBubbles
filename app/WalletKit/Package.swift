@@ -11,7 +11,7 @@ let package = Package(
         .library(name: "WalletKit", targets: ["WalletKit"])
     ],
     dependencies: [
-        .package(path: "vendor/bdk-swift")
+        .package(url: "https://github.com/bitcoindevkit/bdk-swift", exact: "1.2.0")
     ],
     targets: [
         .binaryTarget(
