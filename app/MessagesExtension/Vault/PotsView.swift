@@ -80,8 +80,7 @@ struct PotsView: View {
                         PotCard(record: record,
                                 inThisChat: record.chatKey != nil && record.chatKey == chatKey,
                                 onTap: { resume(record) },
-                                onArchive: { archiveRecord(vaultID: record.vaultID) },
-                                onDelete: { remove(record) })
+                                onArchive: { archiveRecord(vaultID: record.vaultID) })
                     }
                     if !archivedPots.isEmpty { archivedSection }
                 }
@@ -204,8 +203,6 @@ private struct PotCard: View {
     var inThisChat: Bool = false
     let onTap: () -> Void
     var onArchive: (() -> Void)? = nil
-    var onDelete: (() -> Void)? = nil
-    @State private var confirmDelete = false
 
     var body: some View {
         Button(action: onTap) {
@@ -241,17 +238,9 @@ private struct PotCard: View {
             if onArchive != nil {
                 Button { onArchive?() } label: { Label("Archive pot", systemImage: "archivebox") }
             }
-            if onDelete != nil {
-                Button(role: .destructive) { confirmDelete = true } label: {
-                    Label("Delete pot", systemImage: "trash")
-                }
-            }
-        }
-        .confirmationDialog("Delete “\(record.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Delete pot", role: .destructive) { onDelete?() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This destroys your key share (here and in iCloud) — it can't be undone and you can't rejoin. If there's money in the pot and the group needs you to sign, it could get stuck. Archive instead to keep your share.")
+            // Delete is intentionally NOT here — it destroys your share and must
+            // be blocked while there's a balance, which the list doesn't know.
+            // It lives inside the pot (Manage panel), gated on an empty balance.
         }
     }
 

@@ -48,14 +48,11 @@ struct PotDetailView: View {
         } message: {
             Text("It moves to Archived and stops showing here. Your share stays on this phone — you're still a backup signer, and you can rejoin anytime.")
         }
-        .confirmationDialog(coordinator.balanceSats > 0 ? "There's still money in this pot" : "Delete this pot?",
-                            isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Delete pot anyway", role: .destructive) { onDelete?() }
+        .confirmationDialog("Delete this pot?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete pot", role: .destructive) { onDelete?() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(coordinator.balanceSats > 0
-                 ? "Deleting destroys your key share (here and in iCloud) — you can't undo it or rejoin, and the money could get stuck. Move it out first, or Archive to keep your share."
-                 : "This destroys your key share (here and in iCloud). It can't be undone and you can't rejoin. Archive instead if you might want back in.")
+            Text("This destroys your key share (here and in iCloud). It can't be undone and you can't rejoin. Archive instead if you might want back in.")
         }
         .sheet(isPresented: $showAdd) { AddMoneySheet(coordinator: coordinator, store: store) }
         .sheet(isPresented: $showSpend) { SpendSheet(coordinator: coordinator, store: store) }
@@ -114,9 +111,14 @@ struct PotDetailView: View {
             if onDelete != nil {
                 Button { confirmDelete = true } label: {
                     manageRow(icon: "trash", title: "Delete pot",
-                              subtitle: "Destroys your share — can't be undone", destructive: true)
+                              subtitle: coordinator.balanceSats > 0
+                                  ? "Move the money out first"
+                                  : "Destroys your share — can't be undone",
+                              destructive: coordinator.balanceSats == 0)
                 }
                 .buttonStyle(.plain)
+                // Can't destroy your share while there's money in the pot.
+                .disabled(coordinator.balanceSats > 0)
             }
         }
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(.secondarySystemBackground)))
