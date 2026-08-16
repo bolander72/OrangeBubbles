@@ -67,6 +67,9 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        # Portrait-only + iPad requires opting out of multitasking, or App
+        # Store validation demands all four orientations (ITMS-90474).
+        UIRequiresFullScreen: true
         ITSAppUsesNonExemptEncryption: false
         # Silent CloudKit pushes wake the app to finish pot setup in the
         # background (BackgroundCeremonyResumer).
