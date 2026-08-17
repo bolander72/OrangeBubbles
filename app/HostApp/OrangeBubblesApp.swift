@@ -45,6 +45,8 @@ struct HostHomeView: View {
 
             walletSection
 
+            HostPotsSection()
+
             Spacer()
             Text("Your keys never leave your device.\nEncrypted backup lives in your iCloud.")
                 .font(.caption)
