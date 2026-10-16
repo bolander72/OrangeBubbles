@@ -186,10 +186,13 @@ struct ActionTile: View {
     let action: () -> Void
 
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 7) {
+            // Accessibility text sizes: icon beside the label in a full-width
+            // row, so "Receive" never truncates to "Rec…".
+            tileLayout {
                 Image(systemName: systemImage)
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(filled ? AnyShapeStyle(.white) : AnyShapeStyle(tint))
@@ -200,9 +203,12 @@ struct ActionTile: View {
                 Text(title)
                     .font(.system(.footnote, design: .rounded).weight(.semibold))
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
+            .padding(.horizontal, typeSize.isAccessibilitySize ? 14 : 0)
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color(.secondarySystemBackground))
@@ -212,6 +218,31 @@ struct ActionTile: View {
         }
         .buttonStyle(PressableStyle())
         .accessibilityLabel(title)
+    }
+
+    @ViewBuilder
+    private func tileLayout<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        if typeSize.isAccessibilitySize {
+            HStack(spacing: 12) { content(); Spacer(minLength: 0) }
+        } else {
+            VStack(spacing: 7) { content() }
+        }
+    }
+}
+
+/// Lays children out in a row normally and stacks them at accessibility
+/// text sizes, where three side-by-side tiles can't fit their labels.
+struct AdaptiveStack<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var spacing: CGFloat = 10
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if typeSize.isAccessibilitySize {
+            VStack(spacing: spacing) { content() }
+        } else {
+            HStack(spacing: spacing) { content() }
+        }
     }
 }
 
