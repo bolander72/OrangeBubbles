@@ -63,6 +63,20 @@ Unit tests:
 cd app/WalletKit && swift test    # engine, backup crypto, payment requests
 ```
 
+TestFlight release (archive, export, upload in one go; needs Xcode signed
+in to the team, or an App Store Connect API key in `ASC_KEY_ID`,
+`ASC_ISSUER_ID`, `ASC_KEY_PATH`):
+
+```bash
+scripts/release.sh                # upload to App Store Connect
+scripts/release.sh --export-only  # just produce the .ipa
+```
+
+The build number is the commit count on `HEAD`; the marketing version is
+`MARKETING_VERSION` in `app/project.yml`. The script refuses to upload a
+build whose release network is not mainnet. **Release builds are real
+money**; debug builds stay on signet.
+
 ## Getting started (server — reference only, not deployed)
 
 **Product policy: no Taproot Wizards server.** Everything runs on device
