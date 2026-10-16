@@ -23,4 +23,3 @@ dist/
 .env.*
 !.env.example
 app/build/
-frost/target/
