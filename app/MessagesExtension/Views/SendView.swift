@@ -35,6 +35,7 @@ struct SendView: View {
     /// Send Max: sweep every UTXO; the fee comes out of the total.
     @State private var sendMax = false
     @State private var showScanner = false
+    @State private var detailTxid: String?
 
     enum FeeChoice: String, CaseIterable, Identifiable {
         case slow = "Slow"
@@ -286,7 +287,7 @@ struct SendView: View {
                 // Fee
                 VStack(alignment: .leading, spacing: 6) {
                     FieldLabel("Network fee")
-                    HStack(spacing: 8) {
+                    AdaptiveStack(spacing: 8) {
                         ForEach(FeeChoice.allCases) { choice in
                             feeOption(choice)
                         }
@@ -605,12 +606,17 @@ struct SendView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Link(destination: store.chain.explorerURL(txid: txid)) {
+            Button {
+                detailTxid = txid
+            } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "safari")
+                    Image(systemName: "doc.text.magnifyingglass")
                     Text("View transaction")
                 }
                 .font(.system(.subheadline, design: .rounded).weight(.medium))
+            }
+            .sheet(item: Binding(get: { detailTxid.map(TxidBox.init) }, set: { detailTxid = $0?.id })) { box in
+                TransactionDetailView(store: store, txid: box.id)
             }
 
             Button {
@@ -630,4 +636,10 @@ struct SendView: View {
         }
         .padding(20)
     }
+}
+
+
+/// Identifiable wrapper so a txid can drive `.sheet(item:)`.
+struct TxidBox: Identifiable {
+    let id: String
 }

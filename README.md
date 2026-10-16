@@ -52,7 +52,7 @@ device, and run the **OrangeBubbles** scheme. In the simulator, open Messages �
 any conversation → app strip → OrangeBubbles.
 
 - **Debug builds run on standard signet** (free coins from e.g.
-  [signetfaucet.com](https://signetfaucet.com), ~10-minute blocks). Release
+  [alt.signetfaucet.com](https://alt.signetfaucet.com), ~10-minute blocks). Release
   builds are mainnet. Override with the `WALLET_NETWORK` build setting.
 - Real Face ID, iCloud Drive, and iCloud Keychain behavior needs a physical
   device signed into iCloud; the simulator approximates them.

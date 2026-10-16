@@ -19,6 +19,13 @@ public final class WalletEngine: @unchecked Sendable {
     /// same ordered queue of revealed addresses above this mark, so there
     /// is one source of truth and nothing is wasted.
     public private(set) var handedOutReceiveIndex: UInt32?
+    /// Unconfirmed transactions the mempool has dropped or replaced. BDK
+    /// (1.2 bindings) can't forget a transaction it has seen, so these are
+    /// hidden from history and their pending value removed from the
+    /// balance here. Persisted next to the chain cache; cleared when the
+    /// cache is rebuilt.
+    private var evictedTxids: Set<String> = []
+    private let evictedFileURL: URL
     /// True when no chain cache existed for this wallet and one was just
     /// created. Such a wallet knows nothing about change addresses or
     /// history, so its first sync must be a full scan, not an incremental
@@ -85,9 +92,15 @@ public final class WalletEngine: @unchecked Sendable {
         }
 
         try FileManager.default.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
-        let dbPath = Self.chainCacheURL(
+        let dbURL = Self.chainCacheURL(
             storageDirectory: storageDirectory, network: secrets.network, cacheDiscriminator: cacheDiscriminator
-        ).path
+        )
+        let dbPath = dbURL.path
+        self.evictedFileURL = dbURL.deletingPathExtension().appendingPathExtension("evicted.json")
+        if let data = try? Data(contentsOf: evictedFileURL),
+           let ids = try? JSONDecoder().decode([String].self, from: data) {
+            self.evictedTxids = Set(ids)
+        }
 
         self.connection = try Connection(path: dbPath)
         do {
@@ -252,7 +265,10 @@ public final class WalletEngine: @unchecked Sendable {
     public func balance() -> WalletBalance {
         let b = wallet.balance()
         let confirmed = b.confirmed.toSat()
-        let pending = b.trustedPending.toSat() + b.untrustedPending.toSat() + b.immature.toSat()
+        var pending = b.trustedPending.toSat() + b.untrustedPending.toSat() + b.immature.toSat()
+        // Dropped incoming payments still sit in BDK's untrusted-pending;
+        // take them back out so the balance tells the truth.
+        pending -= min(pending, evictedPendingSats())
         return WalletBalance(
             confirmedSats: confirmed,
             pendingSats: pending,
@@ -260,9 +276,63 @@ public final class WalletEngine: @unchecked Sendable {
         )
     }
 
+    private func evictedPendingSats() -> UInt64 {
+        guard !evictedTxids.isEmpty else { return 0 }
+        return wallet.transactions().reduce(UInt64(0)) { sum, canonical in
+            let txid = canonical.transaction.computeTxid().description
+            guard evictedTxids.contains(txid), case .unconfirmed = canonical.chainPosition else { return sum }
+            let values = wallet.sentAndReceived(tx: canonical.transaction)
+            let received = values.received.toSat(), sent = values.sent.toSat()
+            return sum + (received > sent ? received - sent : 0)
+        }
+    }
+
+    /// Records a transaction as seen in the mempool right now (what
+    /// `broadcast` does for our own sends; tests use it to stage incoming
+    /// ones).
+    public func applyUnconfirmed(_ tx: Transaction) throws {
+        wallet.applyUnconfirmedTxs(unconfirmedTxs: [
+            UnconfirmedTx(tx: tx, lastSeen: UInt64(Date().timeIntervalSince1970))
+        ])
+        try persist()
+    }
+
+    /// Hides a dropped or replaced unconfirmed transaction (see
+    /// `evictedTxids`). No-op for confirmed transactions: a block wins.
+    public func evict(txid: String) {
+        guard let canonical = try? wallet.getTx(txid: txid), case .unconfirmed = canonical.chainPosition else { return }
+        evictedTxids.insert(txid)
+        try? JSONEncoder().encode(Array(evictedTxids)).write(to: evictedFileURL, options: .atomic)
+    }
+
+    public func isEvicted(txid: String) -> Bool { evictedTxids.contains(txid) }
+
+    /// Re-announces one of our own unconfirmed transactions (a mempool may
+    /// purge low-fee transactions during congestion). Throws
+    /// `transactionRejected` when the network won't take it any more.
+    public func rebroadcast(txid: String, esploraURL: URL) throws {
+        guard let canonical = try? wallet.getTx(txid: txid), case .unconfirmed = canonical.chainPosition else { return }
+        let client = EsploraClient(url: esploraURL.absoluteString)
+        do {
+            try client.broadcast(transaction: canonical.transaction)
+        } catch let error as EsploraError {
+            if case .HttpResponse(let status, let message) = error {
+                if status == 429 { throw WalletKitError.rateLimited }
+                if (400..<500).contains(status) {
+                    let lowered = message.lowercased()
+                    if lowered.contains("already-in-mempool") || lowered.contains("already-known")
+                        || lowered.contains("already in block chain") { return }
+                    throw WalletKitError.transactionRejected(Self.humanizeRejection(message))
+                }
+            }
+            throw WalletKitError.networkUnreachable
+        }
+    }
+
     public func transactions() -> [WalletTransaction] {
-        wallet.transactions().map { canonical in
+        wallet.transactions().compactMap { canonical -> WalletTransaction? in
             let tx = canonical.transaction
+            if evictedTxids.contains(tx.computeTxid().description) { return nil }
             let values = wallet.sentAndReceived(tx: tx)
             let sent = values.sent.toSat()
             let received = values.received.toSat()

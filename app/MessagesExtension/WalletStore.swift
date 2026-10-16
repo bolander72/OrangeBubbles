@@ -33,7 +33,12 @@ final class WalletStore: ObservableObject {
     /// from a public API — no company server involved.
     @Published private(set) var usdPerBTC: Double?
 
-    let chain: ChainConfig
+    /// The chain backend in use. Starts from the build's default and may be
+    /// pointed at the user's own node (see `useCustomEsplora`).
+    @Published private(set) var chain: ChainConfig
+    /// The user's own Esplora/mempool API, when set.
+    @Published private(set) var customEsploraURL: URL?
+    private let defaultChain: ChainConfig
     /// Wired by MessagesViewController; passkey sheets need a window.
     var presentationAnchor: @MainActor () -> ASPresentationAnchor? = { nil }
 
@@ -60,7 +65,57 @@ final class WalletStore: ObservableObject {
     }
 
     init(chain: ChainConfig = .fromBundle()) {
-        self.chain = chain
+        self.defaultChain = chain
+        let custom = Self.storedCustomEsploraURL
+        self.customEsploraURL = custom
+        self.chain = custom.map { chain.withCustomEsplora($0) } ?? chain
+    }
+
+    // MARK: - Data source (own node)
+
+    private static let customEsploraKey = "customEsploraURL.v1"
+    private static var storedCustomEsploraURL: URL? {
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.string(forKey: customEsploraKey).flatMap(URL.init(string:))
+    }
+
+    /// Switches chain reads to the user's own Esplora/mempool API after
+    /// checking it is reachable and serves this wallet's chain. The wallet
+    /// cache is keyed by endpoint host, so this boots a fresh cache and
+    /// full-scans against the node — cheap there, and the old cache stays
+    /// on disk for `useDefaultEsplora`.
+    func useCustomEsplora(_ raw: String) async throws {
+        guard let url = EsploraEndpointCheck.normalize(raw) else { throw EsploraEndpointCheck.Failure.notAnURL }
+        _ = try await EsploraEndpointCheck.verify(url, network: chain.network)
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.set(url.absoluteString, forKey: Self.customEsploraKey)
+        customEsploraURL = url
+        chain = defaultChain.withCustomEsplora(url)
+        await switchChainBackend()
+    }
+
+    func useDefaultEsplora() async {
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.removeObject(forKey: Self.customEsploraKey)
+        customEsploraURL = nil
+        chain = defaultChain
+        await switchChainBackend()
+    }
+
+    private func switchChainBackend() async {
+        guard let secrets else { return }
+        syncInFlight = nil
+        preferredEsploraIndex = 0
+        endpointCooldownUntil = [:]
+        lastFullSyncAt = nil
+        lastSideDataAt = nil
+        engine = nil
+        do {
+            try await bootEngine(with: secrets)
+        } catch {
+            report(error)
+            return
+        }
+        if let engine, engine.startedFromEmptyCache { needsFullScan = true }
+        hasLoadedOnce = false
+        await refresh(fullScan: needsFullScan, quiet: false)
     }
 
     // MARK: - Lifecycle (auto-wallet)
@@ -330,18 +385,27 @@ final class WalletStore: ObservableObject {
     /// showing the old cache meanwhile; on failure nothing changes and the
     /// next launch tries again.
     private func repairRunawayReveals() async {
-        guard let secrets, let old = engine else { return }
+        await rebuildChainCache(reason: "\(engine?.unusedReceiveAddressCount ?? 0) unused revealed addresses")
+    }
+
+    /// Rebuilds the chain cache from a full scan (see `repairRunawayReveals`
+    /// for the original motivation). Also the way to drop a transaction BDK
+    /// won't forget: a fresh cache only knows what the chain knows.
+    private func rebuildChainCache(reason: String) async {
+        guard let secrets, engine != nil else { return }
         let oldGeneration = chainCacheGeneration
         let newGeneration = oldGeneration + 1
         let storageDir = Self.walletStorageDirectory()
         let newKey = cacheDiscriminator(generation: newGeneration)
         let oldKey = cacheDiscriminator(generation: oldGeneration)
-        NSLog("wallet repair: %d unused revealed addresses — rebuilding chain cache as generation %d",
-              old.unusedReceiveAddressCount, newGeneration)
+        NSLog("wallet repair: %@ — rebuilding chain cache as generation %d", reason, newGeneration)
 
         var trimmed = secrets
         trimmed.receiveIndexHint = 0
         trimmed.changeIndexHint = 0
+        // The hand-out mark must survive a rebuild: it is the one thing a
+        // full scan cannot recover.
+        trimmed.handedOutReceiveIndex = secrets.handedOutReceiveIndex ?? engine?.handedOutReceiveIndex
         do {
             let fresh = try await Self.offMain {
                 try WalletEngine(secrets: trimmed, storageDirectory: storageDir, cacheDiscriminator: newKey)
@@ -440,6 +504,7 @@ final class WalletStore: ObservableObject {
             if fullScan { needsFullScan = false }
             // A fresh sync supersedes whatever the probes remembered.
             probeFingerprints.removeAll()
+            await evictDroppedTransactions()
         } catch {
             // Sync failures/timeouts are non-fatal: show cached state. The
             // isSyncing flag ALWAYS clears (defer), so the spinner can't wedge.
@@ -486,6 +551,56 @@ final class WalletStore: ObservableObject {
 
     /// Snapshot-published addresses; revealed so sync watches them.
     private var upcomingAddresses: [String] = []
+
+    /// A pending transaction the mempool has forgotten (replaced by the
+    /// sender, or purged) would otherwise show as "pending" forever — BDK
+    /// never un-sees a transaction. After each sync, ask the endpoint
+    /// about every pending transaction that hasn't been seen for a while:
+    /// 404 means gone. An incoming one is hidden and its value removed from
+    /// the pending balance. One of ours is re-announced first; only if the
+    /// network now rejects it do we rebuild the cache, which also returns
+    /// its inputs to the balance.
+    private static let evictionGrace: TimeInterval = 20 * 60
+
+    private func evictDroppedTransactions() async {
+        guard let engine else { return }
+        let cutoff = Date().addingTimeInterval(-Self.evictionGrace)
+        let stale = transactions.filter { !$0.confirmed && ($0.timestamp ?? .distantPast) < cutoff }
+        guard !stale.isEmpty else { return }
+        let probe = StatusProbe()
+        var needsRebuild = false
+        for tx in stale.prefix(6) {
+            do {
+                _ = try await withEsploraFailover(perEndpointSeconds: 8) { esplora in
+                    try await probe.txConfirmation(txid: tx.txid, esploraURL: esplora)
+                }
+            } catch WalletKitError.notFound {
+                if tx.direction == .incoming {
+                    NSLog("wallet eviction: incoming %@ no longer in mempool — hiding", tx.txid)
+                    engine.evict(txid: tx.txid)
+                } else {
+                    do {
+                        try await withEsploraFailover(perEndpointSeconds: 10) { esplora in
+                            try await Self.offMain { try engine.rebroadcast(txid: tx.txid, esploraURL: esplora) }
+                        }
+                        NSLog("wallet eviction: re-announced our %@", tx.txid)
+                    } catch WalletKitError.transactionRejected {
+                        NSLog("wallet eviction: our %@ was replaced or invalidated — rebuilding cache", tx.txid)
+                        engine.evict(txid: tx.txid)
+                        needsRebuild = true
+                    } catch {
+                        // Network trouble: leave it; next sync asks again.
+                    }
+                }
+            } catch {
+                // Unreachable / rate limited: not evidence of anything.
+            }
+        }
+        balance = engine.balance()
+        transactions = engine.transactions()
+        publishSnapshot()
+        if needsRebuild { Task { await rebuildChainCache(reason: "dropped outgoing transaction") } }
+    }
 
     /// After a hand-out, the reserved list moves on; publish it right away
     /// so Siri can't be offered the address that just went on screen.

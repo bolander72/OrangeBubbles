@@ -69,6 +69,13 @@ passkey-sealed backups.
 
 ## 4. Public Esplora rate limits (resolved on-device — no proxy)
 
+*Update 2026-10:* items 1–3 below are shipped, plus a probe-based
+refresh that keeps an idle wallet to a few dozen requests an hour and a
+**"Bitcoin data source" setting** where a user can point the app at
+their own Esplora/mempool API (verified by genesis hash before
+switching). Release builds are now mainnet.
+
+
 A restore full-scan fires ~50 requests at mempool.space; hundreds of
 users doing this behind shared CGNAT IPs will eventually hit rate limits.
 The old plan (route through `server/`) is **rejected** under the

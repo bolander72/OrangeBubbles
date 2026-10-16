@@ -538,3 +538,82 @@ final class AddressReuseTests: XCTestCase {
         XCTAssertGreaterThan(engine.watchedScriptPubkeyCount, before)
     }
 }
+
+/// A pending payment the mempool has dropped must leave history and the
+/// pending balance; a confirmed one can't be evicted.
+final class EvictionTests: XCTestCase {
+    private func tempDir() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("walletkit-evict-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    /// A minimal serialized transaction paying `sats` to `address`.
+    private func fakeIncomingTx(to address: String, sats: UInt64) throws -> Transaction {
+        let spk = try Address(address: address, network: .signet).scriptPubkey().toBytes()
+        var raw: [UInt8] = [0x02, 0, 0, 0]              // version 2
+        raw += [0x01]                                  // 1 input
+        raw += [UInt8](repeating: 0xab, count: 32)     // prev txid (fake)
+        raw += [0, 0, 0, 0]                            // vout
+        raw += [0x00]                                  // empty scriptSig
+        raw += [0xff, 0xff, 0xff, 0xff]                // sequence
+        raw += [0x01]                                  // 1 output
+        raw += withUnsafeBytes(of: sats.littleEndian) { Array($0) }
+        raw += [UInt8(spk.count)] + spk
+        raw += [0, 0, 0, 0]                            // locktime
+        return try Transaction(transactionBytes: raw)
+    }
+
+    func testEvictedIncomingLeavesHistoryAndPendingBalance() throws {
+        let dir = tempDir()
+        let secrets = try WalletEngine.generateSecrets(network: .signet)
+        let engine = try WalletEngine(secrets: secrets, storageDirectory: dir)
+        let address = try engine.nextReceiveAddress().address
+        let tx = try fakeIncomingTx(to: address, sats: 50_000)
+        try engine.applyUnconfirmed(tx)
+        let txid = tx.computeTxid().description
+
+        XCTAssertEqual(engine.balance().pendingSats, 50_000)
+        XCTAssertEqual(engine.transactions().map(\.txid), [txid])
+
+        engine.evict(txid: txid)
+        XCTAssertTrue(engine.isEvicted(txid: txid))
+        XCTAssertEqual(engine.balance().pendingSats, 0)
+        XCTAssertTrue(engine.transactions().isEmpty)
+
+        // Eviction survives a relaunch of the same cache …
+        let again = try WalletEngine(secrets: secrets, storageDirectory: dir)
+        XCTAssertTrue(again.isEvicted(txid: txid))
+        XCTAssertEqual(again.balance().pendingSats, 0)
+        // … and is forgotten with the cache (a rebuild only knows the chain).
+        let rebuilt = try WalletEngine(secrets: secrets, storageDirectory: dir, cacheDiscriminator: "g2")
+        XCTAssertFalse(rebuilt.isEvicted(txid: txid))
+    }
+}
+
+
+final class CustomEndpointTests: XCTestCase {
+    func testCustomEndpointGoesFirstAndDropsThirdPartyFees() {
+        let node = URL(string: "https://node.example/api")!
+        let custom = ChainConfig.mainnet.withCustomEsplora(node)
+        XCTAssertEqual(custom.esploraURL, node)
+        XCTAssertEqual(custom.esploraURLs.count, ChainConfig.mainnet.esploraURLs.count + 1)
+        XCTAssertNil(custom.feesURL, "fee estimates come from the node; no third party")
+        XCTAssertEqual(custom.network, .bitcoin)
+        // Idempotent: setting the same node twice doesn't duplicate it.
+        XCTAssertEqual(custom.withCustomEsplora(node).esploraURLs, custom.esploraURLs)
+    }
+
+    func testEndpointNormalisation() {
+        XCTAssertEqual(EsploraEndpointCheck.normalize("node.example/api/")?.absoluteString, "https://node.example/api")
+        XCTAssertEqual(EsploraEndpointCheck.normalize(" http://umbrel.local:3006/api ")?.absoluteString, "http://umbrel.local:3006/api")
+        XCTAssertNil(EsploraEndpointCheck.normalize(""))
+        XCTAssertNil(EsploraEndpointCheck.normalize("ftp://node.example"))
+        XCTAssertNil(EsploraEndpointCheck.normalize("not a url"))
+    }
+
+    func testGenesisHashesPerNetwork() {
+        XCTAssertEqual(ChainConfig.mainnet.genesisHash.prefix(10), "0000000000")
+        XCTAssertEqual(ChainConfig.signet.genesisHash, "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6")
+        XCTAssertNotEqual(ChainConfig.mainnet.genesisHash, ChainConfig.signet.genesisHash)
+    }
+}
