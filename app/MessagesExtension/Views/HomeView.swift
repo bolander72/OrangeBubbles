@@ -155,35 +155,67 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 10) {
-                Text("\(Format.btc(store.balance.totalSats)) BTC")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-
-                if let usd = store.usdApprox(store.balance.totalSats) {
-                    Text(usd)
-                        .font(.system(.caption, design: .rounded).weight(.medium))
-                        .foregroundStyle(.secondary)
+            // BTC + fiat on one line; the pending pill joins them when it
+            // fits and drops to its own line when the figures are wide.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    fiatLine
+                    pendingPill
+                    syncIndicator
                 }
-
-                if store.balance.pendingSats > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "clock.fill").font(.system(size: 8))
-                        Text("\(Format.sats(store.balance.pendingSats)) pending")
+                VStack(spacing: 5) {
+                    HStack(spacing: 10) {
+                        fiatLine
+                        syncIndicator
                     }
-                    .font(.system(.caption2, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Brand.orangeDeep)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Brand.orange.opacity(0.12)))
-                }
-
-                if store.isSyncing {
-                    ProgressView().controlSize(.mini)
+                    pendingPill
                 }
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var fiatLine: some View {
+        HStack(spacing: 10) {
+            Text("\(Format.btc(store.balance.totalSats)) BTC")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            if let usd = store.usdApprox(store.balance.totalSats) {
+                Text(usd)
+                    .font(.system(.caption, design: .rounded).weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private var pendingPill: some View {
+        if store.balance.pendingSats > 0 {
+            HStack(spacing: 3) {
+                Image(systemName: "clock.fill").font(.system(size: 8))
+                Text("\(Format.sats(store.balance.pendingSats)) pending")
+            }
+            .lineLimit(1)
+            .font(.system(.caption2, design: .rounded).weight(.semibold))
+            .foregroundStyle(Brand.orangeDeep)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Brand.orange.opacity(0.12)))
+        }
+    }
+
+    @ViewBuilder
+    private var syncIndicator: some View {
+        if store.isSyncing {
+            ProgressView().controlSize(.mini)
+        } else if store.syncStale {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Couldn't reach the network; showing the last known balance")
+        }
     }
 
     /// The three things the app does, side by side. Receive is the filled

@@ -18,6 +18,22 @@ final class ExtensionBridge: ObservableObject {
         controller?.requestPresentationStyle(.expanded)
     }
 
+    /// Shows an error on top of whatever is currently presented. A SwiftUI
+    /// `.alert` on the root view can't do this: while a sheet (Send, Receive,
+    /// a tapped card) is up, presenting from underneath it tears the sheet
+    /// down and dumps the user back on Home mid-task. UIKit on the top-most
+    /// presented controller never does.
+    func presentError(_ message: String, title: String = "Something went wrong", onDismiss: @escaping () -> Void) {
+        guard var top: UIViewController = controller else { onDismiss(); return }
+        while let presented = top.presentedViewController, !presented.isBeingDismissed {
+            top = presented
+        }
+        if top is UIAlertController { onDismiss(); return } // one at a time
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .cancel) { _ in onDismiss() })
+        top.present(alert, animated: true)
+    }
+
     /// Bounces the user into the container app (passkey ceremonies run
     /// there). Falls back silently; Settings shows manual instructions.
     func openHostApp(_ action: String = "upgrade") {

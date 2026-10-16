@@ -247,7 +247,7 @@ struct SendView: View {
                     }
 
                     HStack {
-                        Text("Available: \(Format.sats(store.balance.confirmedSats)) sats")
+                        Text("Available: \(Format.sats(store.balance.spendableSats)) sats")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -351,7 +351,7 @@ struct SendView: View {
                     .font(.system(.callout, design: .rounded).weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            Text("\(Format.sats(store.balance.confirmedSats)) sats minus the network fee")
+            Text("\(Format.sats(store.balance.spendableSats)) sats minus the network fee")
                 .font(.system(.caption, design: .rounded))
                 .foregroundStyle(.secondary)
         }
@@ -421,8 +421,8 @@ struct SendView: View {
 
     private var isLargeSend: Bool {
         if sendMax { return true }
-        guard let sats = parsedAmount, store.balance.confirmedSats > 0 else { return false }
-        return Double(sats) / Double(store.balance.confirmedSats) > 0.75
+        guard let sats = parsedAmount, store.balance.spendableSats > 0 else { return false }
+        return Double(sats) / Double(store.balance.spendableSats) > 0.75
     }
 
     private func prepare() async {
