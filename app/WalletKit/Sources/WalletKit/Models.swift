@@ -25,6 +25,11 @@ public struct WalletSecrets: Codable, Equatable, Sendable {
     /// rescan is still authoritative.
     public var receiveIndexHint: UInt32
     public var changeIndexHint: UInt32
+    /// Highest receive index ever handed out — shown in Receive, used as a
+    /// claim destination, or issued by Siri. Persisted (and backed up)
+    /// because BDK's own "used" flag is in-memory only; this is what keeps
+    /// an address from being offered twice across launches and devices.
+    public var handedOutReceiveIndex: UInt32?
     public var createdAt: Date
 
     public init(
@@ -34,6 +39,7 @@ public struct WalletSecrets: Codable, Equatable, Sendable {
         scriptType: ScriptType,
         receiveIndexHint: UInt32 = 0,
         changeIndexHint: UInt32 = 0,
+        handedOutReceiveIndex: UInt32? = nil,
         createdAt: Date = Date()
     ) {
         self.version = version
@@ -42,6 +48,7 @@ public struct WalletSecrets: Codable, Equatable, Sendable {
         self.scriptType = scriptType
         self.receiveIndexHint = receiveIndexHint
         self.changeIndexHint = changeIndexHint
+        self.handedOutReceiveIndex = handedOutReceiveIndex
         self.createdAt = createdAt
     }
 }
