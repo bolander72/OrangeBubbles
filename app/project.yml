@@ -8,7 +8,9 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    MARKETING_VERSION: 0.1.0
+    MARKETING_VERSION: 1.0.0
+    # Placeholder for local builds; scripts/release.sh overrides this with
+    # the commit count so every release build number is unique and rising.
     CURRENT_PROJECT_VERSION: 1
     # Set your Apple Developer team here (or in Xcode) to run on device.
     DEVELOPMENT_TEAM: B28G4GL96T
@@ -44,6 +46,8 @@ targets:
       path: HostApp/Info.plist
       properties:
         CFBundleDisplayName: OrangeBubbles
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # Keeps the host app on the same network as the extension.
         WalletNetwork: $(WALLET_NETWORK)
         CFBundleURLTypes:
@@ -105,6 +109,8 @@ targets:
       path: MessagesExtension/Info.plist
       properties:
         CFBundleDisplayName: OrangeBubbles
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         WalletNetwork: $(WALLET_NETWORK)
         NSFaceIDUsageDescription: >-
           Face ID protects your Bitcoin wallet: it's required to create,
@@ -147,6 +153,8 @@ targets:
       path: WalletWidget/Info.plist
       properties:
         CFBundleDisplayName: OrangeBubbles
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:

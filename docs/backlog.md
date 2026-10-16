@@ -23,12 +23,11 @@ app a real purpose, which App Review likes.
 
 ## 2. TestFlight / device-build tooling
 
-An archive + export script (`xcodebuild archive` → `exportArchive` with an
-ExportOptions.plist) and a versioning convention, so device builds and
-TestFlight uploads are one command instead of Xcode clicking.
-
-**Trigger to build:** the moment Apple Developer enrollment clears —
-nothing to do before there's a team to sign with.
+**Done 2026-10:** `scripts/release.sh` archives, exports and uploads in
+one command (automatic signing with `-allowProvisioningUpdates`, or an
+App Store Connect API key for CI). Build number = commit count on
+`HEAD`; marketing version lives in `app/project.yml`. Refuses dirty
+trees and non-mainnet release configs.
 
 ## 3. Dollar-denominated amount entry
 
