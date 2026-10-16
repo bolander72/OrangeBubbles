@@ -1,4 +1,3 @@
-import CryptoKit
 import Messages
 import UIKit
 import WalletKit
@@ -8,115 +7,31 @@ import WalletKit
 @MainActor
 final class ExtensionBridge: ObservableObject {
     weak var controller: MSMessagesAppViewController?
-    var conversation: MSConversation? {
-        didSet { recomputeChatIdentity() }
-    }
+    var conversation: MSConversation?
 
     @Published var presentationStyle: MSMessagesAppPresentationStyle = .compact
 
-    /// A stable fingerprint of the current chat, derived from the set of
-    /// participant UUIDs Messages exposes. Apple guarantees these identifiers
-    /// are identical across every member's device for the same conversation,
-    /// so the fingerprint is the same for everyone — letting us bind a pot to
-    /// a chat without ever seeing a name or number (the sandbox forbids that).
-    /// nil in a 1:1 or when there are no remote participants yet.
-    @Published private(set) var chatKey: String?
-    /// How many people are in the current chat (including you).
-    @Published private(set) var chatParticipantCount = 0
-
     var isCompact: Bool { presentationStyle == .compact }
-
-    private func recomputeChatIdentity() {
-        guard let conversation else { chatKey = nil; chatParticipantCount = 0; return }
-        let ids = ([conversation.localParticipantIdentifier]
-                   + conversation.remoteParticipantIdentifiers)
-            .map(\.uuidString).sorted()
-        chatParticipantCount = ids.count
-        // A group chat is 3+ (you + 2). A 1:1 has a single remote; still
-        // fingerprintable, but pots are a group concept, so we key on any
-        // chat that has at least one other person.
-        guard conversation.remoteParticipantIdentifiers.isEmpty == false else { chatKey = nil; return }
-        let digest = SHA256.hash(data: Data(ids.joined(separator: "|").utf8))
-        chatKey = digest.map { String(format: "%02x", $0) }.joined().prefix(16).description
-    }
-
-    /// This device's member slot in the chat, assigned WITHOUT any coordinator:
-    /// everyone sorts the same participant-UUID set (Apple guarantees it's
-    /// identical across devices) and takes their own 1-based position. So slot
-    /// assignment is deterministic and collision-free with zero negotiation —
-    /// the trustless, serverless way to give each member a distinct FROST index.
-    /// Returns (index, memberCount), or nil outside a group chat.
-    var memberSlot: (index: UInt16, count: UInt16)? {
-        guard let conversation, !conversation.remoteParticipantIdentifiers.isEmpty else { return nil }
-        let local = conversation.localParticipantIdentifier.uuidString
-        let ids = ([conversation.localParticipantIdentifier]
-                   + conversation.remoteParticipantIdentifiers)
-            .map(\.uuidString).sorted()
-        guard let pos = ids.firstIndex(of: local) else { return nil }
-        return (UInt16(pos + 1), UInt16(ids.count))
-    }
-
-    // MARK: - Pot invite card
-
-    /// The invite card is a SEND-ONCE human touchpoint ("Join our pot"). The
-    /// DKG/signing rounds do NOT ride cards back and forth — they sync over
-    /// CloudKit (see CloudKitTransport). Tapping the card just opens the pot to
-    /// join; nobody ever sends a card back.
-    ///
-    /// The app sets this to route a tapped invite to the active pot controller.
-    /// Buffered for cold start (tapping a card launches the extension before the
-    /// controller exists).
-    var onPotInvite: ((PotInvite) -> Void)? {
-        didSet {
-            if let invite = pendingInvite, let handler = onPotInvite {
-                pendingInvite = nil
-                handler(invite)
-            }
-        }
-    }
-    private var pendingInvite: PotInvite?
-
-    private func routeInvite(_ invite: PotInvite) {
-        if let handler = onPotInvite { handler(invite) } else { pendingInvite = invite }
-    }
-
-    /// Insert the "Join our pot" invite card into the compose field. Sent once
-    /// by the creator; the user taps iMessage's Send. We never auto-send, and
-    /// there is never a card to send *back*.
-    func insertInviteCard(for invite: PotInvite) {
-        guard let conversation else { return }
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = "www.boland.co"
-        components.path = "/pot"
-        components.queryItems = invite.queryItems()
-
-        let layout = MSMessageTemplateLayout()
-        layout.caption = "\(invite.emoji) \(invite.name)"
-        layout.subcaption = "Tap to join · \(invite.ruleLine)"
-        layout.trailingCaption = "Tap"
-
-        let message = MSMessage(session: MSSession())
-        message.url = components.url
-        message.layout = layout
-        message.summaryText = "🍯 Shared pot"
-        conversation.insert(message) { [weak self] error in
-            if let error { NSLog("pot invite insert failed: \(error)"); return }
-            // Collapse so the staged card + Send button are visible.
-            Task { @MainActor in self?.requestCompact() }
-        }
-    }
 
     func requestExpanded() {
         guard presentationStyle != .expanded else { return }
         controller?.requestPresentationStyle(.expanded)
     }
 
-    /// Collapse to compact so the transcript + compose field (with a staged
-    /// card) are visible — the user still has to tap iMessage's Send.
-    func requestCompact() {
-        guard presentationStyle != .compact else { return }
-        controller?.requestPresentationStyle(.compact)
+    /// Shows an error on top of whatever is currently presented. A SwiftUI
+    /// `.alert` on the root view can't do this: while a sheet (Send, Receive,
+    /// a tapped card) is up, presenting from underneath it tears the sheet
+    /// down and dumps the user back on Home mid-task. UIKit on the top-most
+    /// presented controller never does.
+    func presentError(_ message: String, title: String = "Something went wrong", onDismiss: @escaping () -> Void) {
+        guard var top: UIViewController = controller else { onDismiss(); return }
+        while let presented = top.presentedViewController, !presented.isBeingDismissed {
+            top = presented
+        }
+        if top is UIAlertController { onDismiss(); return } // one at a time
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .cancel) { _ in onDismiss() })
+        top.present(alert, animated: true)
     }
 
     /// Bounces the user into the container app (passkey ceremonies run
@@ -206,14 +121,6 @@ final class ExtensionBridge: ObservableObject {
         selectedSession = message.session
 
         switch components.path {
-        case "/pot":
-            // Tapping the invite opens the pot to join — the rounds sync over
-            // CloudKit, so there is nothing to send back.
-            if let items = components.queryItems, let invite = PotInvite(queryItems: items) {
-                routeInvite(invite)
-            }
-            requestExpanded()
-            return
         case "/claim":
             // Voucher parsing derives the claim address from the secret —
             // a real wallet-engine construction — so keep it off-main.

@@ -118,36 +118,19 @@ struct CardStatusView: View {
     }
 
     private var detailsCard: some View {
-        VStack(spacing: 0) {
-            if let sats = request.amountSats {
-                row("Amount", "\(Format.sats(sats)) sats")
-                Divider().padding(.horizontal, 16)
-            }
-            row("Address", Format.shortAddress(request.address, prefix: 14, suffix: 10), monospaced: true)
-            if let txid = request.txid {
-                Divider().padding(.horizontal, 16)
-                row("Transaction", "\(txid.prefix(10))…\(txid.suffix(8))", monospaced: true)
-            }
+        var rows: [DetailRow] = []
+        if let sats = request.amountSats {
+            rows.append(DetailRow(title: "Amount", value: "\(Format.sats(sats)) sats"))
         }
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
-    }
-
-    private func row(_ title: String, _ value: String, monospaced: Bool = false) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .font(monospaced
-                    ? .system(.footnote, design: .monospaced).weight(.medium)
-                    : .system(.subheadline, design: .rounded).weight(.semibold))
+        rows.append(DetailRow(
+            title: "Address",
+            value: Format.shortAddress(request.address, prefix: 14, suffix: 10),
+            monospaced: true
+        ))
+        if let txid = request.txid {
+            rows.append(DetailRow(title: "Transaction", value: "\(txid.prefix(10))…\(txid.suffix(8))", monospaced: true))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        return DetailCard(rows: rows)
     }
 
     @ViewBuilder

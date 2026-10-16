@@ -26,7 +26,7 @@ public struct TxConfirmation: Equatable, Sendable {
 public struct StatusProbe: Sendable {
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = BoundedSession.shared) {
         self.session = session
     }
 
@@ -40,10 +40,7 @@ public struct StatusProbe: Sendable {
             let mempool_stats: Stats
         }
         let url = esploraURL.appendingPathComponent("address/\(address)")
-        let (data, response) = try await session.data(from: url)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw WalletKitError.internalError("address lookup failed")
-        }
+        let data = try await fetch(url)
         let info = try JSONDecoder().decode(AddressInfo.self, from: data)
         return AddressActivity(
             confirmedReceivedSats: info.chain_stats.funded_txo_sum,
@@ -58,14 +55,29 @@ public struct StatusProbe: Sendable {
             let block_time: UInt64?
         }
         let url = esploraURL.appendingPathComponent("tx/\(txid)/status")
-        let (data, response) = try await session.data(from: url)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw WalletKitError.internalError("transaction lookup failed")
-        }
+        let data = try await fetch(url)
         let status = try JSONDecoder().decode(Status.self, from: data)
         return TxConfirmation(
             confirmed: status.confirmed,
             blockTime: status.block_time.map { Date(timeIntervalSince1970: TimeInterval($0)) }
         )
+    }
+
+    /// One GET with the errors the failover layer understands: 429 cools
+    /// the endpoint down, anything else that isn't a 200 moves on to the
+    /// next endpoint.
+    private func fetch(_ url: URL) async throws -> Data {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(from: url)
+        } catch {
+            throw WalletKitError.networkUnreachable
+        }
+        switch (response as? HTTPURLResponse)?.statusCode {
+        case 200: return data
+        case 429: throw WalletKitError.rateLimited
+        default: throw WalletKitError.networkUnreachable
+        }
     }
 }

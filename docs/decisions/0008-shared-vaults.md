@@ -1,6 +1,12 @@
 # ADR 0008: Shared Vaults — group-chat-native multisig
 
-**Status:** proposed (2026-08) — protocol specced; v1 buildable now on
+**Status:** withdrawn (2026-10). A FROST-based implementation was built
+and field-tested, then removed from the codebase so the app can focus on
+send / receive / claimable gifts (see backlog item 11). Kept as the
+record of the design; the last working code is in git history before
+commit `d9f3532`.
+
+Original status: proposed (2026-08) — protocol specced; v1 buildable now on
 P2WSH; FROST is the declared v2 target with an explicit readiness gate
 
 ## 1. Product

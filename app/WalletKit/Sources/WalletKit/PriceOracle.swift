@@ -14,13 +14,7 @@ public struct PriceOracle: Sendable {
         self.session = session ?? PriceOracle.boundedSession
     }
 
-    static let boundedSession: URLSession = {
-        let c = URLSessionConfiguration.default
-        c.timeoutIntervalForRequest = 12
-        c.timeoutIntervalForResource = 20
-        c.waitsForConnectivity = false
-        return URLSession(configuration: c)
-    }()
+    static let boundedSession: URLSession = BoundedSession.shared
 
     /// Returns nil on any failure — fiat display simply hides.
     public func usdPerBTC() async -> Double? {
@@ -43,4 +37,18 @@ public struct PriceOracle: Sendable {
         formatter.maximumFractionDigits = usd < 1 ? 4 : 2
         return formatter.string(from: NSNumber(value: usd)) ?? String(format: "$%.2f", usd)
     }
+}
+
+/// The one URLSession for every small JSON fetch (fees, price, status
+/// probes). Short timeouts matter more than usual here: a public Esplora
+/// that is rate-limiting us may hold a connection open for minutes, and
+/// `URLSession.shared`'s 60-second default would stall every refresh.
+public enum BoundedSession {
+    public static let shared: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.timeoutIntervalForRequest = 10
+        c.timeoutIntervalForResource = 15
+        c.waitsForConnectivity = false
+        return URLSession(configuration: c)
+    }()
 }

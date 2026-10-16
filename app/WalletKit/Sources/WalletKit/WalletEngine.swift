@@ -1,5 +1,4 @@
 import BitcoinDevKit
-import CryptoKit
 import Foundation
 
 /// Thin wrapper around a BitcoinDevKit descriptor wallet. All chain logic —
@@ -14,6 +13,11 @@ public final class WalletEngine: @unchecked Sendable {
     public let scriptType: ScriptType
 
     private let wallet: Wallet
+    /// True when no chain cache existed for this wallet and one was just
+    /// created. Such a wallet knows nothing about change addresses or
+    /// history, so its first sync must be a full scan, not an incremental
+    /// one over the few addresses the restore hint revealed.
+    public let startedFromEmptyCache: Bool
     private let connection: Connection
 
     // MARK: - Creation
@@ -48,14 +52,6 @@ public final class WalletEngine: @unchecked Sendable {
         )
     }
 
-    /// Deterministic 24-word mnemonic from an arbitrary string — used by
-    /// the vault test lab so one device can stand in for distinct members.
-    /// (Test tooling; real members each have their own wallet seed.)
-    public static func deterministicMnemonic(from source: String) throws -> String {
-        let entropy = Data(SHA256.hash(data: Data(source.utf8)))
-        return try Mnemonic.fromEntropy(entropy: [UInt8](entropy)).description
-    }
-
     /// Builds (or reopens) the wallet for the given secrets. `storageDirectory`
     /// holds BDK's local chain cache — deletable at any time, resyncable.
     ///
@@ -83,11 +79,9 @@ public final class WalletEngine: @unchecked Sendable {
         }
 
         try FileManager.default.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
-        let safeDiscriminator = cacheDiscriminator.replacingOccurrences(of: "/", with: "_")
-        let dbName = safeDiscriminator.isEmpty
-            ? "bdk-\(secrets.network.rawValue).sqlite"
-            : "bdk-\(secrets.network.rawValue)-\(safeDiscriminator).sqlite"
-        let dbPath = storageDirectory.appendingPathComponent(dbName).path
+        let dbPath = Self.chainCacheURL(
+            storageDirectory: storageDirectory, network: secrets.network, cacheDiscriminator: cacheDiscriminator
+        ).path
 
         self.connection = try Connection(path: dbPath)
         do {
@@ -96,6 +90,7 @@ public final class WalletEngine: @unchecked Sendable {
                 changeDescriptor: changeDescriptor,
                 connection: connection
             )
+            self.startedFromEmptyCache = false
         } catch {
             self.wallet = try Wallet(
                 descriptor: descriptor,
@@ -103,17 +98,49 @@ public final class WalletEngine: @unchecked Sendable {
                 network: bdkNetwork,
                 connection: connection
             )
+            self.startedFromEmptyCache = true
         }
 
         // Restore hint: make sure previously revealed addresses are watched
-        // before the first sync.
+        // before the first sync. Capped: every revealed address costs a
+        // request on every sync, and a hint far beyond what this cache has
+        // seen is a sign of the old runaway reveal (see
+        // revealUpcomingReceiveAddresses), not of hundreds of handed-out
+        // addresses. A restore's full scan finds used ones regardless.
+        let hintCap: UInt32 = 30
+        let receiveTop = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
+        let changeTop = wallet.derivationIndex(keychain: .internal).map { $0 + 1 } ?? 0
         if secrets.receiveIndexHint > 0 {
-            _ = wallet.revealAddressesTo(keychain: .external, index: secrets.receiveIndexHint)
+            _ = wallet.revealAddressesTo(keychain: .external, index: min(secrets.receiveIndexHint, receiveTop + hintCap))
         }
         if secrets.changeIndexHint > 0 {
-            _ = wallet.revealAddressesTo(keychain: .internal, index: secrets.changeIndexHint)
+            _ = wallet.revealAddressesTo(keychain: .internal, index: min(secrets.changeIndexHint, changeTop + hintCap))
         }
         try persist()
+    }
+
+    /// Where the BDK chain cache for a wallet lives. Deletable at any time;
+    /// a full scan rebuilds it.
+    public static func chainCacheURL(storageDirectory: URL, network: NetworkKind, cacheDiscriminator: String) -> URL {
+        let safe = cacheDiscriminator.replacingOccurrences(of: "/", with: "_")
+        let name = safe.isEmpty ? "bdk-\(network.rawValue).sqlite" : "bdk-\(network.rawValue)-\(safe).sqlite"
+        return storageDirectory.appendingPathComponent(name)
+    }
+
+    /// Removes the chain cache (and SQLite sidecars). Call with no engine
+    /// open on it.
+    public static func removeChainCache(storageDirectory: URL, network: NetworkKind, cacheDiscriminator: String) {
+        let base = chainCacheURL(storageDirectory: storageDirectory, network: network, cacheDiscriminator: cacheDiscriminator)
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            try? FileManager.default.removeItem(atPath: base.path + suffix)
+        }
+    }
+
+    /// Revealed receive addresses nobody has paid yet. A healthy wallet has
+    /// a handful; dozens means a cache poisoned by the old runaway reveal,
+    /// which the store repairs by rebuilding the cache.
+    public var unusedReceiveAddressCount: Int {
+        wallet.listUnusedAddresses(keychain: .external).count
     }
 
     // MARK: - Addresses
@@ -128,14 +155,22 @@ public final class WalletEngine: @unchecked Sendable {
     /// Upcoming receive addresses for the shared snapshot (Siri/widget).
     /// These are REVEALED, not peeked: an address we hand out must be
     /// watched by incremental sync, or money sent to it is invisible
-    /// until a full rescan. Idempotent across refreshes until one is used.
+    /// until a full rescan.
+    ///
+    /// Idempotent: returns the newest `count` revealed-but-unused
+    /// addresses and reveals more only when fewer than `count` exist. (An
+    /// earlier version revealed `count` fresh ones past the top on every
+    /// refresh, so the watched set grew by three per tick — hundreds of
+    /// addresses, each a request per sync.)
     public func revealUpcomingReceiveAddresses(count: UInt32) throws -> [String] {
-        let start = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
-        _ = wallet.revealAddressesTo(keychain: .external, index: start + count - 1)
-        try persist()
-        return (start..<(start + count)).map {
-            wallet.peekAddress(keychain: .external, index: $0).address.description
+        var unused = wallet.listUnusedAddresses(keychain: .external)
+        if unused.count < Int(count) {
+            let top = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
+            _ = wallet.revealAddressesTo(keychain: .external, index: top + (count - UInt32(unused.count)) - 1)
+            unused = wallet.listUnusedAddresses(keychain: .external)
+            try persist()
         }
+        return unused.suffix(Int(count)).map { $0.address.description }
     }
 
     /// Highest revealed indexes — stored in the backup as restore hints.
@@ -151,7 +186,11 @@ public final class WalletEngine: @unchecked Sendable {
         let b = wallet.balance()
         let confirmed = b.confirmed.toSat()
         let pending = b.trustedPending.toSat() + b.untrustedPending.toSat() + b.immature.toSat()
-        return WalletBalance(confirmedSats: confirmed, pendingSats: pending)
+        return WalletBalance(
+            confirmedSats: confirmed,
+            pendingSats: pending,
+            spendableSats: confirmed + b.trustedPending.toSat()
+        )
     }
 
     public func transactions() -> [WalletTransaction] {
@@ -207,12 +246,41 @@ public final class WalletEngine: @unchecked Sendable {
             }
         } catch let error as EsploraError {
             NSLog("esplora sync failed: \(error)")
+            if case .HttpResponse(let status, _) = error, status == 429 {
+                throw WalletKitError.rateLimited
+            }
             throw WalletKitError.networkUnreachable
         }
         try persist()
     }
 
+    /// How many script pubkeys an incremental sync queries — one Esplora
+    /// request each, before transaction fetches. Lets the store reason
+    /// about the request budget.
+    public var watchedScriptPubkeyCount: Int {
+        let receive = wallet.derivationIndex(keychain: .external).map { Int($0) + 1 } ?? 0
+        let change = wallet.derivationIndex(keychain: .internal).map { Int($0) + 1 } ?? 0
+        return receive + change
+    }
+
     // MARK: - Spending
+
+    /// Unconfirmed coins we did not create ourselves. Sends never spend
+    /// these: an incoming payment that is still in the mempool can be
+    /// dropped or replaced, which would make our own transaction invalid
+    /// ("inputs missing or spent"). Change from our own unconfirmed sends
+    /// is fine to chain on — we signed the parent — and matches
+    /// `WalletBalance.spendableSats`.
+    private func untrustedOutpoints() -> [OutPoint] {
+        let authored = Set(wallet.transactions().compactMap { canonical -> String? in
+            wallet.sentAndReceived(tx: canonical.transaction).sent.toSat() > 0
+                ? canonical.transaction.computeTxid().description : nil
+        })
+        return wallet.listUnspent().compactMap { output in
+            guard case .unconfirmed = output.chainPosition else { return nil }
+            return authored.contains(output.outpoint.txid) ? nil : output.outpoint
+        }
+    }
 
     public func validateAddress(_ address: String) -> Bool {
         (try? Address(address: address, network: network.bdkNetwork)) != nil
@@ -233,6 +301,7 @@ public final class WalletEngine: @unchecked Sendable {
         do {
             psbt = try TxBuilder()
                 .addRecipient(script: address.scriptPubkey(), amount: Amount.fromSat(satoshi: amountSats))
+                .unspendable(unspendable: untrustedOutpoints())
                 .feeRate(feeRate: try FeeRate.fromSatPerVb(satVb: feeRateSatPerVb))
                 .finish(wallet: wallet)
         } catch {
@@ -258,9 +327,14 @@ public final class WalletEngine: @unchecked Sendable {
 
     /// Sweeps every spendable UTXO to `destination` (the "Send Max" path —
     /// no change output; the fee comes out of the swept total).
+    ///
+    /// `includeUntrusted` also sweeps unconfirmed coins received from others.
+    /// Off for the main wallet (see `untrustedOutpoints`); on for a gift
+    /// voucher, where the whole point is claiming the moment the card lands.
     public func createSignedDrain(
         to destination: String,
-        feeRateSatPerVb: UInt64
+        feeRateSatPerVb: UInt64,
+        includeUntrusted: Bool = false
     ) throws -> SignedSend {
         guard let address = try? Address(address: destination, network: network.bdkNetwork) else {
             throw WalletKitError.invalidAddress(destination)
@@ -271,6 +345,7 @@ public final class WalletEngine: @unchecked Sendable {
             psbt = try TxBuilder()
                 .drainWallet()
                 .drainTo(script: address.scriptPubkey())
+                .unspendable(unspendable: includeUntrusted ? [] : untrustedOutpoints())
                 .feeRate(feeRate: try FeeRate.fromSatPerVb(satVb: feeRateSatPerVb))
                 .finish(wallet: wallet)
         } catch {
@@ -334,13 +409,58 @@ public final class WalletEngine: @unchecked Sendable {
             try client.broadcast(transaction: send.transaction)
         } catch let error as EsploraError {
             NSLog("broadcast failed: \(error)")
-            throw WalletKitError.networkUnreachable
+            if case .HttpResponse(let status, _) = error, status == 429 {
+                throw WalletKitError.rateLimited
+            }
+            if case .HttpResponse(let status, let message) = error, (400..<500).contains(status) {
+                // A retry (timeout → failover) can land after the first
+                // attempt actually went through. That's success.
+                let lowered = message.lowercased()
+                if !(lowered.contains("already-in-mempool") || lowered.contains("already-known")
+                    || lowered.contains("already in block chain")) {
+                    // A 4xx is the node's verdict on the transaction itself
+                    // (missing inputs, fee below relay minimum, …) — not a
+                    // connectivity problem, so don't dress it up as one.
+                    throw WalletKitError.transactionRejected(Self.humanizeRejection(message))
+                }
+            } else {
+                throw WalletKitError.networkUnreachable
+            }
         }
+        // Record it locally right away so balance and activity reflect the
+        // spend immediately — the next sync confirms it, but a slow endpoint
+        // must not leave the user staring at the pre-send balance.
+        wallet.applyUnconfirmedTxs(unconfirmedTxs: [
+            UnconfirmedTx(tx: send.transaction, lastSeen: UInt64(Date().timeIntervalSince1970))
+        ])
+        try? persist()
         return send.transaction.computeTxid().description
     }
 
     private func persist() throws {
         _ = try wallet.persist(connection: connection)
+    }
+
+    /// Esplora returns Bitcoin Core's raw reject string (often wrapped in
+    /// JSON). Pull out the part a person can act on.
+    static func humanizeRejection(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = trimmed.lowercased()
+        if lowered.contains("missingorspent") || lowered.contains("already spent") {
+            return "one of the coins it spends is no longer available. Pull to refresh and try again."
+        }
+        if lowered.contains("min relay fee") || lowered.contains("mempool min fee") || lowered.contains("insufficient fee") {
+            // "insufficient fee" is also what a node says when the tx
+            // conflicts with one already in its mempool (ours, moments ago).
+            return "the fee is too low for the network right now, or it conflicts with a payment you just made. Pull to refresh, then try again with a faster fee tier."
+        }
+        // Strip a JSON envelope like {"code":-26,"message":"..."} if present.
+        if let data = trimmed.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let message = obj["message"] as? String {
+            return message
+        }
+        return trimmed.isEmpty ? "no reason given." : trimmed
     }
 }
 

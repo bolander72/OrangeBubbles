@@ -205,44 +205,6 @@ final class ClaimVoucherTests: XCTestCase {
     }
 }
 
-final class VaultTests: XCTestCase {
-    func testCosignerXpubDerivesFromSeed() throws {
-        let m = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-        let xpub = try VaultEngine.cosignerXpub(mnemonic: m, network: .signet)
-        XCTAssertFalse(xpub.isEmpty)
-        // Deterministic: same seed -> same cosigner key.
-        let again = try VaultEngine.cosignerXpub(mnemonic: m, network: .signet)
-        XCTAssertEqual(xpub, again)
-    }
-
-    func testAssembledDescriptorIsOrderIndependent() throws {
-        let m1 = try WalletEngine.generateSecrets(network: .signet).mnemonic
-        let m2 = try WalletEngine.generateSecrets(network: .signet).mnemonic
-        let m3 = try WalletEngine.generateSecrets(network: .signet).mnemonic
-        let x1 = try VaultEngine.cosignerXpub(mnemonic: m1, network: .signet)
-        let x2 = try VaultEngine.cosignerXpub(mnemonic: m2, network: .signet)
-        let x3 = try VaultEngine.cosignerXpub(mnemonic: m3, network: .signet)
-
-        let a = try VaultEngine.assembleDescriptor(threshold: 2, cosignerXpubs: [x1, x2, x3], network: .signet)
-        let b = try VaultEngine.assembleDescriptor(threshold: 2, cosignerXpubs: [x3, x1, x2], network: .signet)
-        // sortedmulti (BIP67) -> identical descriptor regardless of input order.
-        XCTAssertEqual(a, b, "vault descriptor must not depend on member ordering")
-        XCTAssertTrue(a.external.hasPrefix("wsh(sortedmulti(2,"))
-    }
-
-    func testVaultAddressIsBech32() throws {
-        let m1 = try WalletEngine.generateSecrets(network: .signet).mnemonic
-        let m2 = try WalletEngine.generateSecrets(network: .signet).mnemonic
-        let x1 = try VaultEngine.cosignerXpub(mnemonic: m1, network: .signet)
-        let x2 = try VaultEngine.cosignerXpub(mnemonic: m2, network: .signet)
-        let desc = try VaultEngine.assembleDescriptor(threshold: 2, cosignerXpubs: [x1, x2], network: .signet)
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vault-\(UUID().uuidString)")
-        let engine = try VaultEngine(descriptors: desc, network: .signet, storageDirectory: dir)
-        let addr = try engine.depositAddress()
-        XCTAssertTrue(addr.hasPrefix("tb1q"), "P2WSH signet address is bech32 tb1q…")
-    }
-}
-
 final class BackupVersioningTests: XCTestCase {
     private func makeSecrets(hint: UInt32) -> WalletSecrets {
         WalletSecrets(
@@ -425,6 +387,41 @@ final class WalletEngineTests: XCTestCase {
         let engine = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
         XCTAssertEqual(engine.revealedIndexes().receive, 5)
         XCTAssertEqual(try engine.nextReceiveAddress().index, 6)
+    }
+
+    /// Regression: this used to reveal three fresh addresses on every call,
+    /// so the watched set (and the request cost of every sync) grew without
+    /// bound. Repeated calls must return the same addresses.
+    func testUpcomingAddressesAreIdempotent() throws {
+        let secrets = try WalletEngine.generateSecrets(network: .signet)
+        let engine = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
+
+        let first = try engine.revealUpcomingReceiveAddresses(count: 3)
+        let watchedAfterFirst = engine.watchedScriptPubkeyCount
+        for _ in 0..<10 {
+            XCTAssertEqual(try engine.revealUpcomingReceiveAddresses(count: 3), first)
+        }
+        XCTAssertEqual(engine.watchedScriptPubkeyCount, watchedAfterFirst)
+        XCTAssertEqual(first.count, 3)
+        XCTAssertEqual(Set(first).count, 3, "three distinct addresses")
+
+        // Handing out a fresh address in Receive makes it the newest unused one.
+        let shown = try engine.nextReceiveAddress().address
+        XCTAssertTrue(try engine.revealUpcomingReceiveAddresses(count: 3).contains(shown))
+        XCTAssertLessThanOrEqual(engine.unusedReceiveAddressCount, 4)
+    }
+
+    /// A restore hint far beyond anything this cache has seen is the old
+    /// runaway reveal, not hundreds of handed-out addresses: it is capped so
+    /// a restore does not start life with a 350-request sync.
+    func testRestoreHintIsCapped() throws {
+        var secrets = try WalletEngine.generateSecrets(network: .signet)
+        secrets.receiveIndexHint = 350
+        secrets.changeIndexHint = 200
+
+        let engine = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
+        XCTAssertEqual(engine.revealedIndexes().receive, 30)
+        XCTAssertEqual(engine.revealedIndexes().change, 30)
     }
 
     func testAddressValidation() throws {
