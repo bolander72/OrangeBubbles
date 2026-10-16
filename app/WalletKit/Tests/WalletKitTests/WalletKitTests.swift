@@ -405,10 +405,11 @@ final class WalletEngineTests: XCTestCase {
         XCTAssertEqual(first.count, 3)
         XCTAssertEqual(Set(first).count, 3, "three distinct addresses")
 
-        // Handing out a fresh address in Receive makes it the newest unused one.
+        // An address shown in Receive is handed out: it is never offered
+        // again, so it stays out of the reserved list.
         let shown = try engine.nextReceiveAddress().address
-        XCTAssertTrue(try engine.revealUpcomingReceiveAddresses(count: 3).contains(shown))
-        XCTAssertLessThanOrEqual(engine.unusedReceiveAddressCount, 4)
+        XCTAssertFalse(try engine.revealUpcomingReceiveAddresses(count: 3).contains(shown))
+        XCTAssertEqual(engine.unusedReceiveAddressCount, 3)
     }
 
     /// A restore hint far beyond anything this cache has seen is the old
@@ -442,5 +443,98 @@ final class WalletEngineTests: XCTestCase {
         )
         let engine = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
         XCTAssertTrue(try engine.nextReceiveAddress().address.hasPrefix("bc1p"))
+    }
+}
+
+/// No address is ever handed out twice: once shown (Receive) or issued
+/// (Siri), it leaves every list that could offer it again.
+final class AddressReuseTests: XCTestCase {
+    private func tempDir() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("walletkit-reuse-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    func testReceiveSheetAddressesNeverRepeatAndLeaveTheReservedList() throws {
+        let engine = try WalletEngine(secrets: try WalletEngine.generateSecrets(network: .signet), storageDirectory: tempDir())
+        let reserved = try engine.revealUpcomingReceiveAddresses(count: 3)
+
+        // Receive and Siri drain the same ordered queue: Receive takes the
+        // reserved addresses first (nothing is wasted), then reveals more.
+        var shown: [String] = []
+        for _ in 0..<5 { shown.append(try engine.nextReceiveAddress().address) }
+        XCTAssertEqual(Set(shown).count, 5, "every Receive open gets a new address")
+        XCTAssertEqual(Array(shown.prefix(3)), reserved)
+
+        let reservedAfter = try engine.revealUpcomingReceiveAddresses(count: 3)
+        XCTAssertEqual(reservedAfter.count, 3)
+        XCTAssertTrue(Set(reservedAfter).isDisjoint(with: shown), "a shown address is never offered to Siri")
+        XCTAssertEqual(engine.handedOutReceiveIndex, 4)
+    }
+
+    func testExcludedAddressesAreSkippedButStillCountAsHandedOut() throws {
+        let engine = try WalletEngine(secrets: try WalletEngine.generateSecrets(network: .signet), storageDirectory: tempDir())
+        let reserved = try engine.revealUpcomingReceiveAddresses(count: 3)
+        // Siri issued the first reserved address; the extension hasn't
+        // reconciled yet. Receive must step over it.
+        let next = try engine.nextReceiveAddress(excluding: [reserved[0]])
+        XCTAssertEqual(next.address, reserved[1])
+        XCTAssertFalse(try engine.revealUpcomingReceiveAddresses(count: 3).contains(reserved[0]),
+                       "the stepped-over address sits below the high-water mark and is gone for good")
+    }
+
+    func testHandedOutMarkSurvivesRelaunchAndRestore() throws {
+        var secrets = try WalletEngine.generateSecrets(network: .signet)
+        let dir = tempDir()
+        let shown: String
+        let reserved: [String]
+        do {
+            let engine = try WalletEngine(secrets: secrets, storageDirectory: dir)
+            shown = try engine.nextReceiveAddress().address
+            reserved = try engine.revealUpcomingReceiveAddresses(count: 3)
+            try engine.markReceiveAddressHandedOut(reserved[0])
+            // What the store persists on every hand-out.
+            secrets.receiveIndexHint = engine.revealedIndexes().receive
+            secrets.handedOutReceiveIndex = engine.handedOutReceiveIndex
+        }
+        // Relaunch: same cache. BDK forgets its in-memory "used" flags.
+        let relaunched = try WalletEngine(secrets: secrets, storageDirectory: dir)
+        let afterRelaunch = try relaunched.revealUpcomingReceiveAddresses(count: 3)
+        XCTAssertFalse(afterRelaunch.contains(shown))
+        XCTAssertFalse(afterRelaunch.contains(reserved[0]))
+        XCTAssertEqual(Array(afterRelaunch.prefix(2)), Array(reserved[1...2]))
+
+        // Restore on a new device: fresh cache, hints from the backup.
+        let restored = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
+        let afterRestore = try restored.revealUpcomingReceiveAddresses(count: 3)
+        XCTAssertFalse(afterRestore.contains(shown))
+        XCTAssertFalse(afterRestore.contains(reserved[0]))
+        XCTAssertEqual(afterRestore, afterRelaunch)
+    }
+
+    func testIssuedAddressIsReplacedNotRepeated() throws {
+        let engine = try WalletEngine(secrets: try WalletEngine.generateSecrets(network: .signet), storageDirectory: tempDir())
+        let reserved = try engine.revealUpcomingReceiveAddresses(count: 3)
+        let issued = reserved[0]
+
+        XCTAssertTrue(try engine.markReceiveAddressHandedOut(issued))
+        let next = try engine.revealUpcomingReceiveAddresses(count: 3)
+        XCTAssertFalse(next.contains(issued))
+        XCTAssertEqual(next.count, 3)
+        XCTAssertEqual(Set(next).intersection(reserved).count, 2, "the two untouched reservations stay; one fresh address joins")
+
+        let mark = engine.handedOutReceiveIndex
+        XCTAssertTrue(try engine.markReceiveAddressHandedOut(issued), "idempotent")
+        XCTAssertEqual(engine.handedOutReceiveIndex, mark, "re-marking changes nothing")
+        XCTAssertFalse(try engine.markReceiveAddressHandedOut("tb1qn3q8pvyhesvl4zrzuzcvwlykr7hqeju30yckpm"), "not ours")
+    }
+
+    func testHandedOutAddressesStayWatched() throws {
+        let engine = try WalletEngine(secrets: try WalletEngine.generateSecrets(network: .signet), storageDirectory: tempDir())
+        let before = engine.watchedScriptPubkeyCount
+        _ = try engine.nextReceiveAddress()
+        _ = try engine.revealUpcomingReceiveAddresses(count: 3)
+        try engine.markReceiveAddressHandedOut(try engine.revealUpcomingReceiveAddresses(count: 3)[0])
+        // Handing out marks used but never un-reveals: the watched set only grows.
+        XCTAssertGreaterThan(engine.watchedScriptPubkeyCount, before)
     }
 }

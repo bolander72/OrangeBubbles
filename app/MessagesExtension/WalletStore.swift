@@ -461,11 +461,18 @@ final class WalletStore: ObservableObject {
             lastSideDataAt = Date()
         }
 
-        // Keep the handed-out (Siri/widget) addresses revealed & backed
-        // up — before publishing, so the snapshot is never stale.
-        let before = engine.revealedIndexes().receive
+        // Addresses Siri handed out since we last looked are now "used"
+        // (handed out), so they drop out of the reserved list and get
+        // replaced. Then keep the reserved addresses revealed & backed up
+        // before publishing, so the snapshot is never stale.
+        let before = (engine.revealedIndexes().receive, engine.handedOutReceiveIndex)
+        let issued = SharedSnapshot.issuedReceiveAddresses
+        if !issued.isEmpty {
+            for address in issued { _ = try? await Self.offMain { try engine.markReceiveAddressHandedOut(address) } }
+            SharedSnapshot.clearIssued(issued)
+        }
         upcomingAddresses = (try? await Self.offMain { try engine.revealUpcomingReceiveAddresses(count: 3) }) ?? []
-        if engine.revealedIndexes().receive != before {
+        if (engine.revealedIndexes().receive, engine.handedOutReceiveIndex) != before {
             try? await persistBackup()
         }
         publishSnapshot()
@@ -479,6 +486,14 @@ final class WalletStore: ObservableObject {
 
     /// Snapshot-published addresses; revealed so sync watches them.
     private var upcomingAddresses: [String] = []
+
+    /// After a hand-out, the reserved list moves on; publish it right away
+    /// so Siri can't be offered the address that just went on screen.
+    private func republishReservedAddresses() async {
+        guard let engine else { return }
+        upcomingAddresses = (try? await Self.offMain { try engine.revealUpcomingReceiveAddresses(count: 3) }) ?? []
+        publishSnapshot()
+    }
 
     /// "≈ $12.34" for display, or nil when the rate is unknown.
     func usdApprox(_ sats: UInt64) -> String? {
@@ -503,7 +518,9 @@ final class WalletStore: ObservableObject {
                 )
             },
             network: chain.network.rawValue,
-            upcomingReceiveAddresses: upcomingAddresses,
+            // Belt and braces: never re-offer an address the host app
+            // already gave someone, even before the next reconcile.
+            upcomingReceiveAddresses: upcomingAddresses.filter { !SharedSnapshot.issuedReceiveAddresses.contains($0) },
             usdPerBTC: usdPerBTC,
             updatedAt: Date()
         ).save()
@@ -514,8 +531,11 @@ final class WalletStore: ObservableObject {
 
     func makeReceiveRequest(amountSats: UInt64?, label: String?) async throws -> PaymentRequest {
         guard let engine else { throw WalletKitError.internalError("wallet not ready") }
-        let next = try await Self.offMain { try engine.nextReceiveAddress() }
-        try? await persistBackup() // advance index hints; best-effort
+        // Skip anything Siri handed out that we haven't reconciled yet.
+        let issued = Set(SharedSnapshot.issuedReceiveAddresses)
+        let next = try await Self.offMain { try engine.nextReceiveAddress(excluding: issued) }
+        try? await persistBackup() // records the hand-out + index hints; best-effort
+        await republishReservedAddresses()
         // Watch it closely for a while: this is the address most likely to
         // receive something in the next few minutes.
         recentlyShownAddresses.append((next.address, Date()))
@@ -735,7 +755,7 @@ final class WalletStore: ObservableObject {
         guard voucher.network == chain.network else {
             throw WalletKitError.internalError("This gift is on \(voucher.network.rawValue); this wallet is on \(chain.network.rawValue).")
         }
-        let destination = try await Self.offMain { try engine.nextReceiveAddress() }.address
+        let destination = try await Self.offMain { try engine.nextReceiveAddress(excluding: Set(SharedSnapshot.issuedReceiveAddresses)) }.address
         let rate = max(feeTiers.halfHourFee, feeTiers.minimumFee)
         let swept = try await withEsploraFailover { esplora in
             try await Self.offMain {
@@ -843,6 +863,7 @@ final class WalletStore: ObservableObject {
         let indexes = engine.revealedIndexes()
         secrets.receiveIndexHint = indexes.receive
         secrets.changeIndexHint = indexes.change
+        secrets.handedOutReceiveIndex = engine.handedOutReceiveIndex
         self.secrets = secrets
         localSecrets.save(secrets)
 

@@ -152,7 +152,24 @@ what was learned.
 and there is real user pull for shared accounts. Start from the ADRs and
 the git history, not from scratch.
 
-## 12. Multi-device same-wallet writes — accepted behavior
+## 12. Silent payments (BIP352) — looked at, not pursued (2026-10)
+
+*Sending* to `sp1…` addresses is feasible today in pure Swift (a spike
+passed all 28 official sending vectors using swift-secp256k1; closed
+unmerged, see taproot-wizards/OrangeBubbles#2 for the code). *Receiving*
+is not: a receiver must scan every taproot transaction with its scan
+key, light clients need a tweak index that no public Esplora serves, the
+few servers that do are single-operator and 100 GB–1.6 TB, and hosting
+one is out under the no-server policy. Sending alone was judged not worth
+a new dependency and a build plugin. The app's privacy model stays
+**one fresh address per hand-out, never reused** — which on chain is
+indistinguishable from a silent payment output.
+
+**Trigger to revisit:** an Esplora-grade public tweak index with more
+than one independent operator, or BDK shipping a stable light-client
+receiver.
+
+## 13. Multi-device same-wallet writes — accepted behavior
 
 Two iPhones on one Apple ID can both unlock the wallet and race the backup
 reseal (last writer wins; `NSFileCoordinator` prevents torn writes; the
