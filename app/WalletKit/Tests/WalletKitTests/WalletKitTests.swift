@@ -389,6 +389,41 @@ final class WalletEngineTests: XCTestCase {
         XCTAssertEqual(try engine.nextReceiveAddress().index, 6)
     }
 
+    /// Regression: this used to reveal three fresh addresses on every call,
+    /// so the watched set (and the request cost of every sync) grew without
+    /// bound. Repeated calls must return the same addresses.
+    func testUpcomingAddressesAreIdempotent() throws {
+        let secrets = try WalletEngine.generateSecrets(network: .signet)
+        let engine = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
+
+        let first = try engine.revealUpcomingReceiveAddresses(count: 3)
+        let watchedAfterFirst = engine.watchedScriptPubkeyCount
+        for _ in 0..<10 {
+            XCTAssertEqual(try engine.revealUpcomingReceiveAddresses(count: 3), first)
+        }
+        XCTAssertEqual(engine.watchedScriptPubkeyCount, watchedAfterFirst)
+        XCTAssertEqual(first.count, 3)
+        XCTAssertEqual(Set(first).count, 3, "three distinct addresses")
+
+        // Handing out a fresh address in Receive makes it the newest unused one.
+        let shown = try engine.nextReceiveAddress().address
+        XCTAssertTrue(try engine.revealUpcomingReceiveAddresses(count: 3).contains(shown))
+        XCTAssertLessThanOrEqual(engine.unusedReceiveAddressCount, 4)
+    }
+
+    /// A restore hint far beyond anything this cache has seen is the old
+    /// runaway reveal, not hundreds of handed-out addresses: it is capped so
+    /// a restore does not start life with a 350-request sync.
+    func testRestoreHintIsCapped() throws {
+        var secrets = try WalletEngine.generateSecrets(network: .signet)
+        secrets.receiveIndexHint = 350
+        secrets.changeIndexHint = 200
+
+        let engine = try WalletEngine(secrets: secrets, storageDirectory: tempDir())
+        XCTAssertEqual(engine.revealedIndexes().receive, 30)
+        XCTAssertEqual(engine.revealedIndexes().change, 30)
+    }
+
     func testAddressValidation() throws {
         let engine = try WalletEngine(
             secrets: try WalletEngine.generateSecrets(network: .bitcoin),

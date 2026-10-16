@@ -144,6 +144,9 @@ public enum WalletKitError: LocalizedError {
     case insufficientFunds
     case amountBelowDust
     case networkUnreachable
+    /// The data service answered 429. Failover cools that endpoint down
+    /// for a while instead of hammering it on the next tick.
+    case rateLimited
     /// The network answered and said no (bad inputs, fee too low, …).
     /// Distinct from `networkUnreachable` so failover doesn't retry it
     /// and the user sees the real reason instead of "check your connection".
@@ -161,6 +164,7 @@ public enum WalletKitError: LocalizedError {
         case .insufficientFunds: return "Not enough funds to cover the amount plus network fees."
         case .amountBelowDust: return "Amount is too small to send on the Bitcoin network — the minimum is \(dustLimitSats) sats."
         case .networkUnreachable: return "Couldn't reach the Bitcoin network. Check your connection and try again."
+        case .rateLimited: return "The Bitcoin data service is busy right now. Try again in a minute."
         case .transactionRejected(let why): return "The Bitcoin network rejected this transaction: \(why)"
         case .feeBumpNotPossible(let why): return "Can't speed this payment up: \(why)"
         case .backupNotFound: return "No wallet backup found in iCloud."

@@ -91,22 +91,125 @@ final class WalletStore: ObservableObject {
     /// Index of the Esplora endpoint that last answered; failover starts
     /// there instead of re-trying a throttled primary on every call.
     private var preferredEsploraIndex = 0
+    /// Endpoints that answered 429, and when they may be tried again.
+    private var endpointCooldownUntil: [Int: Date] = [:]
 
-    /// Polls the chain every few seconds while the extension is on screen,
-    /// so incoming payments appear without closing and reopening. Started
+    // MARK: - Request budget
+    //
+    // The app has no backend: every request goes to a public Esplora, and
+    // those are rate-limited per IP (blockstream.info: 700/hour). A BDK
+    // incremental sync costs about one request per revealed script pubkey
+    // (`engine.watchedScriptPubkeyCount`, dozens after a few sessions), so
+    // syncing every 12 s was thousands of requests an hour. Instead:
+    //
+    //   • A full BDK sync runs on open, after our own broadcasts, on
+    //     pull-to-refresh, and otherwise only every `fullSyncInterval`.
+    //   • Between those, each tick *probes* only what can change right
+    //     now — receive addresses shown in the last few minutes and our
+    //     unconfirmed txids — one request each, and triggers a sync only
+    //     when a probe sees something new. Nothing to watch → no request.
+    //   • Ticks come every 20 s while something is pending, 60 s otherwise.
+    //
+    // Idle cost is a few dozen requests an hour; with a payment pending it
+    // stays in the low hundreds, and a payment to a just-shown address
+    // still shows up within one tick.
+
+    private var lastFullSyncAt: Date?
+    /// A wallet whose cache was just created knows no history until a full
+    /// scan succeeds; incremental syncs of the few revealed addresses would
+    /// never find it. Set on an empty cache and on restore, cleared by the
+    /// first successful full scan.
+    private var needsFullScan = false
+    /// When a full sync was last *started* — a failing sync must not be
+    /// retried every tick (each one costs a request per watched address).
+    private var lastFullSyncAttemptAt: Date?
+    private var lastSideDataAt: Date?
+    /// Receive addresses handed out recently, with when they were shown.
+    private var recentlyShownAddresses: [(address: String, shownAt: Date)] = []
+    /// Last probe result per address/txid, so a tick can tell "changed".
+    private var probeFingerprints: [String: String] = [:]
+
+    private static let recentAddressWindow: TimeInterval = 10 * 60
+    private static let pendingTick: UInt64 = 20_000_000_000
+    private static let idleTick: UInt64 = 60_000_000_000
+    private static let fullSyncIntervalPending: TimeInterval = 5 * 60
+    private static let fullSyncIntervalIdle: TimeInterval = 15 * 60
+    private static let failedSyncRetryInterval: TimeInterval = 2 * 60
+    private static let sideDataInterval: TimeInterval = 2 * 60
+
+    private var recentAddresses: [String] {
+        let cutoff = Date().addingTimeInterval(-Self.recentAddressWindow)
+        return recentlyShownAddresses.filter { $0.shownAt > cutoff }.map(\.address)
+    }
+
+    private var unconfirmedTxids: [String] {
+        transactions.filter { !$0.confirmed }.map(\.txid)
+    }
+
+    /// Something on screen can change from one tick to the next.
+    private var hasPendingActivity: Bool {
+        !recentAddresses.isEmpty || !unconfirmedTxids.isEmpty
+    }
+
+    /// Keeps the chain view current while the extension is on screen, at
+    /// the lowest request cost that still makes a payment to a just-shown
+    /// address appear within a tick (see "Request budget" above). Started
     /// on willBecomeActive, stopped on willResignActive — never runs in
     /// the background (extensions don't have one).
     func startAutoRefresh() {
         guard autoRefreshTask == nil else { return }
         autoRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                let pending = await self?.hasPendingActivity ?? false
+                try? await Task.sleep(nanoseconds: pending ? Self.pendingTick : Self.idleTick)
                 guard !Task.isCancelled else { break }
-                // Background ticks fail quietly: a flaky endpoint every
-                // 12 s must not pop a modal while someone is mid-task.
-                await self?.refresh(quiet: true)
+                await self?.tick()
             }
         }
+    }
+
+    /// One auto-refresh tick: a full sync when one is due, otherwise a
+    /// cheap probe that escalates to a sync only on change. Always quiet.
+    private func tick() async {
+        guard engine != nil, !isSyncing else { return }
+        let interval = hasPendingActivity ? Self.fullSyncIntervalPending : Self.fullSyncIntervalIdle
+        let now = Date()
+        let syncedRecently = lastFullSyncAt.map { now.timeIntervalSince($0) < interval } ?? false
+        let triedRecently = lastFullSyncAttemptAt.map { now.timeIntervalSince($0) < Self.failedSyncRetryInterval } ?? false
+        if syncedRecently || triedRecently {
+            if await probeSawChange() { await refresh(quiet: true) }
+        } else {
+            await refresh(quiet: true)
+        }
+    }
+
+    /// Asks the endpoint about the handful of things that can change
+    /// between full syncs. One request per item; none when there is
+    /// nothing to watch. Any failure reads as "no change" — the next full
+    /// sync is never more than `fullSyncInterval` away.
+    private func probeSawChange() async -> Bool {
+        let addresses = recentAddresses
+        let txids = unconfirmedTxids
+        guard !addresses.isEmpty || !txids.isEmpty else { return false }
+        NSLog("wallet probe: addresses=%d txids=%d", addresses.count, txids.count)
+        let probe = StatusProbe()
+        var changed = false
+        for address in addresses {
+            guard let activity = try? await withEsploraFailover(perEndpointSeconds: 8, { esplora in
+                try await probe.addressActivity(address: address, esploraURL: esplora)
+            }) else { continue }
+            let fingerprint = "\(activity.confirmedReceivedSats)/\(activity.mempoolReceivedSats)/\(activity.spentSats)"
+            if let previous = probeFingerprints[address], previous != fingerprint { changed = true }
+            if probeFingerprints[address] == nil, activity.hasAny { changed = true }
+            probeFingerprints[address] = fingerprint
+        }
+        for txid in txids where !changed {
+            guard let status = try? await withEsploraFailover(perEndpointSeconds: 8, { esplora in
+                try await probe.txConfirmation(txid: txid, esploraURL: esplora)
+            }) else { continue }
+            if status.confirmed { changed = true }
+        }
+        return changed
     }
 
     func stopAutoRefresh() {
@@ -127,10 +230,22 @@ final class WalletStore: ObservableObject {
                 // Fast path: this device already holds the wallet.
                 try await bootEngine(with: cached)
                 phase = .ready
-                // Opening the app is not a request to talk to the network:
-                // a slow endpoint shows the cached balance plus the stale
-                // marker, never a modal. Pull-to-refresh stays loud.
-                await refresh(quiet: true)
+                if let engine, engine.unusedReceiveAddressCount > Self.runawayRevealThreshold {
+                    // Don't spend a 300-request sync on a cache we are about
+                    // to replace; the rebuilt one syncs itself when ready.
+                    Task { await repairRunawayReveals() }
+                } else if let engine, engine.startedFromEmptyCache {
+                    // Secrets without a chain cache (cache deleted, or a new
+                    // Esplora host): only a full scan finds the history.
+                    needsFullScan = true
+                    await refresh(fullScan: true, quiet: true)
+                } else {
+                    // Opening the app is not a request to talk to the
+                    // network: a slow endpoint shows the cached balance plus
+                    // the stale marker, never a modal. Pull-to-refresh stays
+                    // loud.
+                    await refresh(quiet: true)
+                }
                 return
             }
             // Everything touching the ubiquity container must stay off the
@@ -152,6 +267,7 @@ final class WalletStore: ObservableObject {
                 localSecrets.save(restored)
                 backupInICloud = try await Self.offMain { store.isUsingICloud }
                 phase = .ready
+                needsFullScan = true
                 await refresh(fullScan: true)
             } else {
                 phase = .working("Setting things up…")
@@ -175,12 +291,93 @@ final class WalletStore: ObservableObject {
 
     private func bootEngine(with secrets: WalletSecrets) async throws {
         let storageDir = Self.walletStorageDirectory()
-        let cacheKey = chain.esploraURL.host ?? ""
+        let cacheKey = cacheDiscriminator(generation: chainCacheGeneration)
         let engine = try await Self.offMain {
             try WalletEngine(secrets: secrets, storageDirectory: storageDir, cacheDiscriminator: cacheKey)
         }
         self.engine = engine
         self.secrets = secrets
+    }
+
+    // MARK: - Chain cache generations
+
+    /// The chain cache file is named by endpoint host plus a generation
+    /// number; bumping the generation is how a cache gets rebuilt without
+    /// ever deleting the one the UI is currently showing.
+    private static let chainCacheGenerationKey = "chainCacheGeneration.v1"
+    private var chainCacheGeneration: Int {
+        get { max(1, UserDefaults.standard.integer(forKey: Self.chainCacheGenerationKey)) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.chainCacheGenerationKey) }
+    }
+
+    private func cacheDiscriminator(generation: Int) -> String {
+        let host = chain.esploraURL.host ?? ""
+        return generation <= 1 ? host : "\(host)-g\(generation)"
+    }
+
+    /// More revealed-but-unused receive addresses than this means a cache
+    /// poisoned by the old runaway reveal (BIP44's gap is 20).
+    private static let runawayRevealThreshold = 60
+
+    /// One-time repair for caches poisoned by the old runaway address
+    /// reveal (three fresh addresses per refresh, forever): with hundreds of
+    /// revealed-but-unused addresses, every sync was hundreds of requests —
+    /// the reason public Esploras started answering 429.
+    ///
+    /// Builds a fresh cache under the next generation with a full scan
+    /// (which reveals only what was used plus the normal gap), and only
+    /// once that succeeds swaps it in and deletes the old one. The UI keeps
+    /// showing the old cache meanwhile; on failure nothing changes and the
+    /// next launch tries again.
+    private func repairRunawayReveals() async {
+        guard let secrets, let old = engine else { return }
+        let oldGeneration = chainCacheGeneration
+        let newGeneration = oldGeneration + 1
+        let storageDir = Self.walletStorageDirectory()
+        let newKey = cacheDiscriminator(generation: newGeneration)
+        let oldKey = cacheDiscriminator(generation: oldGeneration)
+        NSLog("wallet repair: %d unused revealed addresses — rebuilding chain cache as generation %d",
+              old.unusedReceiveAddressCount, newGeneration)
+
+        var trimmed = secrets
+        trimmed.receiveIndexHint = 0
+        trimmed.changeIndexHint = 0
+        do {
+            let fresh = try await Self.offMain {
+                try WalletEngine(secrets: trimmed, storageDirectory: storageDir, cacheDiscriminator: newKey)
+            }
+            // A full scan on a throttled endpoint can be slow; this is a
+            // background job, so give it real time before giving up.
+            try await withTimeout(seconds: 180) {
+                try await self.withEsploraFailover(perEndpointSeconds: 150) { esplora in
+                    try await Self.offMain { try fresh.sync(esploraURL: esplora, fullScan: true) }
+                }
+            }
+            _ = try? await Self.offMain { try fresh.revealUpcomingReceiveAddresses(count: 3) }
+
+            // Swap. Anything still running against the old engine finishes
+            // on its own; the UI reads from `engine` from here on.
+            chainCacheGeneration = newGeneration
+            engine = fresh
+            self.secrets = trimmed
+            balance = fresh.balance()
+            transactions = fresh.transactions()
+            lastFullSyncAt = Date()
+            syncStale = false
+            probeFingerprints.removeAll()
+            publishSnapshot()
+            try? await persistBackup() // sane index hints from now on
+            try? await Self.offMain {
+                WalletEngine.removeChainCache(storageDirectory: storageDir, network: secrets.network, cacheDiscriminator: oldKey)
+            }
+            NSLog("wallet repair: done — now watching %d script pubkeys", fresh.watchedScriptPubkeyCount)
+        } catch {
+            NSLog("wallet repair: deferred (%@)", String(describing: error))
+            try? await Self.offMain {
+                WalletEngine.removeChainCache(storageDirectory: storageDir, network: secrets.network, cacheDiscriminator: newKey)
+            }
+            await refresh(quiet: true)
+        }
     }
 
     /// Key material for a restore, honoring the envelope's provider:
@@ -210,10 +407,11 @@ final class WalletStore: ObservableObject {
     /// `quiet` suppresses the error alert on sync failure — used by the
     /// auto-refresh loop, where the cached state simply stays on screen and
     /// `syncStale` lets the UI hint that it is not live.
-    func refresh(fullScan: Bool = false, quiet: Bool = false) async {
+    func refresh(fullScan requestedFullScan: Bool = false, quiet: Bool = false) async {
         guard let engine, !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
+        let fullScan = requestedFullScan || needsFullScan
 
         // Show what we already know before touching the network: the BDK
         // cache has the last balance and history, and a slow or hung
@@ -225,6 +423,8 @@ final class WalletStore: ObservableObject {
 
         do {
             if syncInFlight == nil || fullScan {
+                NSLog("wallet sync: full=%d spks=%d", fullScan ? 1 : 0, engine.watchedScriptPubkeyCount)
+                lastFullSyncAttemptAt = Date()
                 let sync = Task {
                     try await self.withEsploraFailover { esplora in
                         try await Self.offMain { try engine.sync(esploraURL: esplora, fullScan: fullScan) }
@@ -236,6 +436,10 @@ final class WalletStore: ObservableObject {
             let sync = syncInFlight!
             try await withTimeout(seconds: 25) { try await sync.value }
             syncStale = false
+            lastFullSyncAt = Date()
+            if fullScan { needsFullScan = false }
+            // A fresh sync supersedes whatever the probes remembered.
+            probeFingerprints.removeAll()
         } catch {
             // Sync failures/timeouts are non-fatal: show cached state. The
             // isSyncing flag ALWAYS clears (defer), so the spinner can't wedge.
@@ -245,13 +449,17 @@ final class WalletStore: ObservableObject {
         let previousTotal = balance.totalSats
         balance = engine.balance()
         transactions = engine.transactions()
-        // Side data, fetched together so a slow fee endpoint doesn't delay
-        // the price (both are bounded to a few seconds by BoundedSession).
-        let preferredEsplora = chain.esploraURLs[preferredEsploraIndex]
-        async let tiersFetch = feeEstimator.tiers(esploraURL: preferredEsplora, feesURL: chain.feesURL)
-        async let priceFetch = priceOracle.usdPerBTC()
-        feeTiers = await tiersFetch
-        usdPerBTC = await priceFetch ?? usdPerBTC
+        // Side data: fetched together so a slow fee endpoint doesn't delay
+        // the price (both bounded by BoundedSession), and at most every
+        // couple of minutes — fee tiers and the rate don't move faster.
+        if lastSideDataAt.map({ Date().timeIntervalSince($0) > Self.sideDataInterval }) ?? true {
+            let preferredEsplora = chain.esploraURLs[preferredEsploraIndex]
+            async let tiersFetch = feeEstimator.tiers(esploraURL: preferredEsplora, feesURL: chain.feesURL)
+            async let priceFetch = priceOracle.usdPerBTC()
+            feeTiers = await tiersFetch
+            usdPerBTC = await priceFetch ?? usdPerBTC
+            lastSideDataAt = Date()
+        }
 
         // Keep the handed-out (Siri/widget) addresses revealed & backed
         // up — before publishing, so the snapshot is never stale.
@@ -308,6 +516,10 @@ final class WalletStore: ObservableObject {
         guard let engine else { throw WalletKitError.internalError("wallet not ready") }
         let next = try await Self.offMain { try engine.nextReceiveAddress() }
         try? await persistBackup() // advance index hints; best-effort
+        // Watch it closely for a while: this is the address most likely to
+        // receive something in the next few minutes.
+        recentlyShownAddresses.append((next.address, Date()))
+        recentlyShownAddresses.removeAll { Date().timeIntervalSince($0.shownAt) > Self.recentAddressWindow }
         return PaymentRequest(address: next.address, amountSats: amountSats, label: label)
     }
 
@@ -436,20 +648,35 @@ final class WalletStore: ObservableObject {
         _ operation: @escaping @Sendable (URL) async throws -> T
     ) async throws -> T {
         let urls = chain.esploraURLs
-        let order = Array(urls.indices).map { ($0 + preferredEsploraIndex) % urls.count }
+        let now = Date()
+        var order = Array(urls.indices).map { ($0 + preferredEsploraIndex) % urls.count }
+        // Endpoints that recently answered 429 go last — but are never
+        // skipped outright, in case every endpoint is cooling down.
+        order.sort { (endpointCooldownUntil[$0] ?? .distantPast) < (endpointCooldownUntil[$1] ?? .distantPast) }
+        let allCooling = order.allSatisfy { (endpointCooldownUntil[$0] ?? .distantPast) > now }
+        var lastError: WalletKitError = .networkUnreachable
         for (position, index) in order.enumerated() {
+            if !allCooling, (endpointCooldownUntil[index] ?? .distantPast) > now { continue }
             let url = urls[index]
             do {
                 let result = try await withTimeout(seconds: perEndpointSeconds) { try await operation(url) }
                 preferredEsploraIndex = index
+                endpointCooldownUntil[index] = nil
                 return result
             } catch let error as WalletKitError {
-                guard case .networkUnreachable = error, position < order.count - 1 else {
+                switch error {
+                case .rateLimited:
+                    endpointCooldownUntil[index] = now.addingTimeInterval(5 * 60)
+                    lastError = error
+                case .networkUnreachable:
+                    lastError = error
+                default:
                     throw error
                 }
+                if position == order.count - 1 { throw lastError }
             }
         }
-        throw WalletKitError.networkUnreachable
+        throw lastError
     }
 
     // MARK: - Claimable gifts (ADR 0005)

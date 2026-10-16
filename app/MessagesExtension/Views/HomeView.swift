@@ -121,7 +121,6 @@ struct HomeView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(store: store, bridge: bridge)
         }
-        .task { await store.refresh() }
     }
 
     /// Any tapped card (request or receipt) opens the live status view.
