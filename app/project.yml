@@ -17,9 +17,8 @@ settings:
       # Debug builds run on signet (Mutinynet) — free test coins.
       WALLET_NETWORK: signet
     release:
-      # TestFlight beta runs on signet — testers use free test-sats
-      # (signetfaucet.com). Flip back to `bitcoin` for the real launch.
-      WALLET_NETWORK: signet
+      # Release builds are mainnet: real bitcoin. Debug stays on signet.
+      WALLET_NETWORK: bitcoin
 
 packages:
   WalletKit:

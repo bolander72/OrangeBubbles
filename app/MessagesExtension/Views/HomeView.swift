@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var showSend = false
     @State private var showGift = false
     @State private var showSettings = false
+    @State private var selectedTransaction: WalletTransaction?
 
     @AppStorage("passkeyNudgeDismissed.v1") private var passkeyNudgeDismissed = false
     @State private var speedingUp = false
@@ -121,6 +122,9 @@ struct HomeView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(store: store, bridge: bridge)
         }
+        .sheet(item: $selectedTransaction) { tx in
+            TransactionDetailView(store: store, txid: tx.txid)
+        }
     }
 
     /// Any tapped card (request or receipt) opens the live status view.
@@ -147,6 +151,8 @@ struct HomeView: View {
                 Text(Format.sats(store.balance.totalSats))
                     .font(.system(size: bridge.isCompact ? 30 : 38, weight: .bold, design: .rounded))
                     .foregroundStyle(Brand.gradient)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                     .contentTransition(.numericText())
                     .animation(.spring(response: 0.4), value: store.balance.totalSats)
                 Text("sats")
@@ -170,6 +176,16 @@ struct HomeView: View {
                     pendingPill
                 }
             }
+
+            // A brand-new wallet: say what this is before the tiles do.
+            if store.balance.totalSats == 0, store.transactions.isEmpty, !store.isSyncing {
+                Text("Your wallet is ready. Keys stay on this phone; the backup is in your iCloud.")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 2)
+                    .padding(.horizontal, 12)
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -187,6 +203,7 @@ struct HomeView: View {
             }
         }
         .lineLimit(1)
+        .minimumScaleFactor(0.7)
     }
 
     @ViewBuilder
@@ -222,7 +239,7 @@ struct HomeView: View {
     /// once there is something to spend.
     private var actionRow: some View {
         let hasFunds = store.balance.totalSats > 0
-        return HStack(spacing: 10) {
+        return AdaptiveStack(spacing: 10) {
             ActionTile(title: "Receive", systemImage: "arrow.down.left", filled: true) {
                 bridge.requestExpanded()
                 showReceive = true
@@ -262,7 +279,7 @@ struct HomeView: View {
                         ForEach(store.transactions) { tx in
                             TransactionRow(
                                 tx: tx,
-                                explorerURL: store.chain.explorerURL(txid: tx.txid),
+                                onTap: { selectedTransaction = tx },
                                 onSpeedUp: (tx.direction == .outgoing && !tx.confirmed && !speedingUp)
                                     ? { speedUp(tx.txid) }
                                     : nil
@@ -286,6 +303,8 @@ struct HomeView: View {
                 .font(.system(.caption, design: .rounded).weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
 
             ForEach(store.outstandingGifts) { gift in
                 Button {
@@ -302,6 +321,7 @@ struct HomeView: View {
                                 : "Unclaimed · expires \(Format.relative(gift.voucher.expiresAt))")
                                 .font(.caption2)
                                 .foregroundStyle(gift.voucher.isExpired ? Color.orange : Color.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
@@ -356,9 +376,8 @@ struct HomeView: View {
 }
 
 struct TransactionRow: View {
-    @Environment(\.openURL) private var openURL
     let tx: WalletTransaction
-    let explorerURL: URL
+    let onTap: () -> Void
     var onSpeedUp: (() -> Void)?
 
     /// An outgoing tx whose outputs all came back to us — a self-transfer.
@@ -380,7 +399,7 @@ struct TransactionRow: View {
 
     var body: some View {
         Button {
-            openURL(explorerURL)
+            onTap()
         } label: {
             HStack(spacing: 12) {
                 IconBubble(
@@ -412,6 +431,8 @@ struct TransactionRow: View {
                     Text(amountLabel)
                         .font(.system(.subheadline, design: .rounded).weight(.bold))
                         .foregroundStyle(tx.direction == .incoming ? .green : .primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
 
                     if let onSpeedUp {
                         Button {

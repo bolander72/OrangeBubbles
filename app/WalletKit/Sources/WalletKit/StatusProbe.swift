@@ -76,6 +76,7 @@ public struct StatusProbe: Sendable {
         }
         switch (response as? HTTPURLResponse)?.statusCode {
         case 200: return data
+        case 404: throw WalletKitError.notFound
         case 429: throw WalletKitError.rateLimited
         default: throw WalletKitError.networkUnreachable
         }

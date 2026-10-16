@@ -9,6 +9,10 @@ struct SettingsView: View {
     @State private var seedWords: [String]?
     @State private var migrating = false
     @State private var showSecurityExplainer = false
+    @State private var customEndpointText = ""
+    @State private var checkingEndpoint = false
+    @State private var endpointMessage: (text: String, isError: Bool)?
+    @FocusState private var endpointFieldFocused: Bool
     #if DEBUG
         @State private var showClaimLinkPrompt = false
         @State private var passkeyProbeResult: String?
@@ -21,6 +25,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 backupSection
+                dataSourceSection
                 recoverySection
                 aboutSection
                 #if DEBUG
@@ -106,6 +111,71 @@ struct SettingsView: View {
                     .font(.system(.body, design: .rounded).weight(.medium))
             }
             .accessibilityHint("Explains where your keys live and how backups are encrypted")
+        }
+    }
+
+    private var dataSourceSection: some View {
+        Section {
+            if let custom = store.customEsploraURL {
+                LabeledContent("Server", value: custom.host ?? custom.absoluteString)
+                Button {
+                    Task {
+                        checkingEndpoint = true
+                        await store.useDefaultEsplora()
+                        checkingEndpoint = false
+                        endpointMessage = ("Back on the public services.", false)
+                    }
+                } label: {
+                    Label("Use the public services", systemImage: "arrow.uturn.backward")
+                }
+                .disabled(checkingEndpoint)
+            } else {
+                LabeledContent("Server", value: "mempool.space, blockstream.info")
+            }
+
+            TextField("https://your-node.example/api", text: $customEndpointText)
+                .keyboardType(.URL)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .font(.system(.footnote, design: .monospaced))
+                .focused($endpointFieldFocused)
+                .submitLabel(.go)
+                .onSubmit { Task { await applyCustomEndpoint() } }
+
+            Button {
+                endpointFieldFocused = false
+                Task { await applyCustomEndpoint() }
+            } label: {
+                if checkingEndpoint {
+                    ProgressView()
+                } else {
+                    Label("Use this server", systemImage: "server.rack")
+                }
+            }
+            .disabled(customEndpointText.trimmingCharacters(in: .whitespaces).isEmpty || checkingEndpoint)
+
+            if let endpointMessage {
+                Text(endpointMessage.text)
+                    .font(.caption)
+                    .foregroundStyle(endpointMessage.isError ? .red : .secondary)
+            }
+        } header: {
+            Text("Bitcoin data source")
+        } footer: {
+            Text("The public services see the addresses you look up and your IP, and limit how often the app can ask. Your own node has neither problem — any Esplora or mempool API URL works. The app checks the server is on \(store.chain.network.rawValue) before switching, and keeps the public services as a fallback.")
+        }
+    }
+
+    private func applyCustomEndpoint() async {
+        checkingEndpoint = true
+        defer { checkingEndpoint = false }
+        endpointMessage = nil
+        do {
+            try await store.useCustomEsplora(customEndpointText)
+            customEndpointText = ""
+            endpointMessage = ("Switched. Your wallet is rescanning against your node.", false)
+        } catch {
+            endpointMessage = ((error as? LocalizedError)?.errorDescription ?? "\(error)", true)
         }
     }
 

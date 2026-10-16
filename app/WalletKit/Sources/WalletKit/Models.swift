@@ -158,6 +158,10 @@ public enum WalletKitError: LocalizedError {
     /// Distinct from `networkUnreachable` so failover doesn't retry it
     /// and the user sees the real reason instead of "check your connection".
     case transactionRejected(String)
+    /// The data service has never heard of this address or transaction
+    /// (HTTP 404). For a transaction we broadcast, it means the mempool
+    /// dropped or replaced it.
+    case notFound
     case feeBumpNotPossible(String)
     case backupNotFound
     case backupCorrupted(String)
@@ -173,6 +177,7 @@ public enum WalletKitError: LocalizedError {
         case .networkUnreachable: return "Couldn't reach the Bitcoin network. Check your connection and try again."
         case .rateLimited: return "The Bitcoin data service is busy right now. Try again in a minute."
         case .transactionRejected(let why): return "The Bitcoin network rejected this transaction: \(why)"
+        case .notFound: return "Not found on the Bitcoin network."
         case .feeBumpNotPossible(let why): return "Can't speed this payment up: \(why)"
         case .backupNotFound: return "No wallet backup found in iCloud."
         case .backupCorrupted(let why): return "Wallet backup could not be read: \(why)"
