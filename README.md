@@ -48,7 +48,9 @@ open OrangeBubbles.xcodeproj
 ```
 
 Then in Xcode: set your team under Signing & Capabilities, pick a simulator or
-device, and run the **OrangeBubbles** scheme. In the simulator, open Messages →
+device, and run the **OrangeBubbles** scheme. The first build asks you to trust
+the `swift-secp256k1` build plugin (it generates the libsecp256k1 sources used
+for silent payments); command-line builds pass `-skipPackagePluginValidation`. In the simulator, open Messages →
 any conversation → app strip → OrangeBubbles.
 
 - **Debug builds run on standard signet** (free coins from e.g.

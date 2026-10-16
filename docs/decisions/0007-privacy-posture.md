@@ -51,6 +51,8 @@ unlinkable address per payment — the most substantive *real* privacy
 tech on Bitcoin today. Already in the backlog; honest blocker is
 light-client scanning (needs specialized indexes public Esplora doesn't
 serve). Revisit as BIP352 indexer availability matures.
+*Update 2026-10:* **sending** to `sp1…` addresses is implemented in
+WalletKit (ADR 0010); receiving stays here with its trigger.
 
 ### Tier 3 — PayJoin (BIP78, sending)
 Collaborative transactions that break the "all inputs belong to the

@@ -49,8 +49,11 @@ jobs:
       - name: Build
         working-directory: app
         run: |
+          # swift-secp256k1 (BIP352 sending) ships a SwiftPM build-tool
+          # plugin; command-line builds must opt in to running it.
           xcodebuild -project OrangeBubbles.xcodeproj \
             -scheme OrangeBubbles \
             -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             build
