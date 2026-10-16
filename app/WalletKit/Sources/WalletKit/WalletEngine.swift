@@ -13,6 +13,11 @@ public final class WalletEngine: @unchecked Sendable {
     public let scriptType: ScriptType
 
     private let wallet: Wallet
+    /// True when no chain cache existed for this wallet and one was just
+    /// created. Such a wallet knows nothing about change addresses or
+    /// history, so its first sync must be a full scan, not an incremental
+    /// one over the few addresses the restore hint revealed.
+    public let startedFromEmptyCache: Bool
     private let connection: Connection
 
     // MARK: - Creation
@@ -74,11 +79,9 @@ public final class WalletEngine: @unchecked Sendable {
         }
 
         try FileManager.default.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
-        let safeDiscriminator = cacheDiscriminator.replacingOccurrences(of: "/", with: "_")
-        let dbName = safeDiscriminator.isEmpty
-            ? "bdk-\(secrets.network.rawValue).sqlite"
-            : "bdk-\(secrets.network.rawValue)-\(safeDiscriminator).sqlite"
-        let dbPath = storageDirectory.appendingPathComponent(dbName).path
+        let dbPath = Self.chainCacheURL(
+            storageDirectory: storageDirectory, network: secrets.network, cacheDiscriminator: cacheDiscriminator
+        ).path
 
         self.connection = try Connection(path: dbPath)
         do {
@@ -87,6 +90,7 @@ public final class WalletEngine: @unchecked Sendable {
                 changeDescriptor: changeDescriptor,
                 connection: connection
             )
+            self.startedFromEmptyCache = false
         } catch {
             self.wallet = try Wallet(
                 descriptor: descriptor,
@@ -94,17 +98,49 @@ public final class WalletEngine: @unchecked Sendable {
                 network: bdkNetwork,
                 connection: connection
             )
+            self.startedFromEmptyCache = true
         }
 
         // Restore hint: make sure previously revealed addresses are watched
-        // before the first sync.
+        // before the first sync. Capped: every revealed address costs a
+        // request on every sync, and a hint far beyond what this cache has
+        // seen is a sign of the old runaway reveal (see
+        // revealUpcomingReceiveAddresses), not of hundreds of handed-out
+        // addresses. A restore's full scan finds used ones regardless.
+        let hintCap: UInt32 = 30
+        let receiveTop = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
+        let changeTop = wallet.derivationIndex(keychain: .internal).map { $0 + 1 } ?? 0
         if secrets.receiveIndexHint > 0 {
-            _ = wallet.revealAddressesTo(keychain: .external, index: secrets.receiveIndexHint)
+            _ = wallet.revealAddressesTo(keychain: .external, index: min(secrets.receiveIndexHint, receiveTop + hintCap))
         }
         if secrets.changeIndexHint > 0 {
-            _ = wallet.revealAddressesTo(keychain: .internal, index: secrets.changeIndexHint)
+            _ = wallet.revealAddressesTo(keychain: .internal, index: min(secrets.changeIndexHint, changeTop + hintCap))
         }
         try persist()
+    }
+
+    /// Where the BDK chain cache for a wallet lives. Deletable at any time;
+    /// a full scan rebuilds it.
+    public static func chainCacheURL(storageDirectory: URL, network: NetworkKind, cacheDiscriminator: String) -> URL {
+        let safe = cacheDiscriminator.replacingOccurrences(of: "/", with: "_")
+        let name = safe.isEmpty ? "bdk-\(network.rawValue).sqlite" : "bdk-\(network.rawValue)-\(safe).sqlite"
+        return storageDirectory.appendingPathComponent(name)
+    }
+
+    /// Removes the chain cache (and SQLite sidecars). Call with no engine
+    /// open on it.
+    public static func removeChainCache(storageDirectory: URL, network: NetworkKind, cacheDiscriminator: String) {
+        let base = chainCacheURL(storageDirectory: storageDirectory, network: network, cacheDiscriminator: cacheDiscriminator)
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            try? FileManager.default.removeItem(atPath: base.path + suffix)
+        }
+    }
+
+    /// Revealed receive addresses nobody has paid yet. A healthy wallet has
+    /// a handful; dozens means a cache poisoned by the old runaway reveal,
+    /// which the store repairs by rebuilding the cache.
+    public var unusedReceiveAddressCount: Int {
+        wallet.listUnusedAddresses(keychain: .external).count
     }
 
     // MARK: - Addresses
@@ -119,14 +155,22 @@ public final class WalletEngine: @unchecked Sendable {
     /// Upcoming receive addresses for the shared snapshot (Siri/widget).
     /// These are REVEALED, not peeked: an address we hand out must be
     /// watched by incremental sync, or money sent to it is invisible
-    /// until a full rescan. Idempotent across refreshes until one is used.
+    /// until a full rescan.
+    ///
+    /// Idempotent: returns the newest `count` revealed-but-unused
+    /// addresses and reveals more only when fewer than `count` exist. (An
+    /// earlier version revealed `count` fresh ones past the top on every
+    /// refresh, so the watched set grew by three per tick — hundreds of
+    /// addresses, each a request per sync.)
     public func revealUpcomingReceiveAddresses(count: UInt32) throws -> [String] {
-        let start = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
-        _ = wallet.revealAddressesTo(keychain: .external, index: start + count - 1)
-        try persist()
-        return (start..<(start + count)).map {
-            wallet.peekAddress(keychain: .external, index: $0).address.description
+        var unused = wallet.listUnusedAddresses(keychain: .external)
+        if unused.count < Int(count) {
+            let top = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
+            _ = wallet.revealAddressesTo(keychain: .external, index: top + (count - UInt32(unused.count)) - 1)
+            unused = wallet.listUnusedAddresses(keychain: .external)
+            try persist()
         }
+        return unused.suffix(Int(count)).map { $0.address.description }
     }
 
     /// Highest revealed indexes — stored in the backup as restore hints.
@@ -202,9 +246,21 @@ public final class WalletEngine: @unchecked Sendable {
             }
         } catch let error as EsploraError {
             NSLog("esplora sync failed: \(error)")
+            if case .HttpResponse(let status, _) = error, status == 429 {
+                throw WalletKitError.rateLimited
+            }
             throw WalletKitError.networkUnreachable
         }
         try persist()
+    }
+
+    /// How many script pubkeys an incremental sync queries — one Esplora
+    /// request each, before transaction fetches. Lets the store reason
+    /// about the request budget.
+    public var watchedScriptPubkeyCount: Int {
+        let receive = wallet.derivationIndex(keychain: .external).map { Int($0) + 1 } ?? 0
+        let change = wallet.derivationIndex(keychain: .internal).map { Int($0) + 1 } ?? 0
+        return receive + change
     }
 
     // MARK: - Spending
@@ -353,6 +409,9 @@ public final class WalletEngine: @unchecked Sendable {
             try client.broadcast(transaction: send.transaction)
         } catch let error as EsploraError {
             NSLog("broadcast failed: \(error)")
+            if case .HttpResponse(let status, _) = error, status == 429 {
+                throw WalletKitError.rateLimited
+            }
             if case .HttpResponse(let status, let message) = error, (400..<500).contains(status) {
                 // A retry (timeout → failover) can land after the first
                 // attempt actually went through. That's success.
