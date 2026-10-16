@@ -43,6 +43,17 @@ struct HostHomeView: View {
         }
         .padding(.horizontal, 32)
         .task { await ops.determineState() }
+        #if DEBUG
+            // Test hook: `simctl launch … --args -issueReceiveAddress 1` runs
+            // the same hand-out the Siri intent performs, inside the real
+            // host-app process (App Group entitlement and all), and logs it.
+            .task {
+                guard UserDefaults.standard.bool(forKey: "issueReceiveAddress") else { return }
+                let issued = SharedSnapshot.load()?.issueReceiveAddress()
+                NSLog("debug issueReceiveAddress -> %@ (ledger now %@)",
+                      issued ?? "nil", SharedSnapshot.issuedReceiveAddresses.joined(separator: ","))
+            }
+        #endif
         .onOpenURL { url in
             // orangebubbles://upgrade — handoff from the Messages extension.
             guard url.host == "upgrade" || url.path.contains("upgrade") else { return }
