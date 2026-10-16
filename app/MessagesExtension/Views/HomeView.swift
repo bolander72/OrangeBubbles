@@ -4,101 +4,10 @@ import WalletKit
 struct HomeView: View {
     @ObservedObject var store: WalletStore
     @ObservedObject var bridge: ExtensionBridge
-    @StateObject private var ceremony: PotCeremonyController
-
-    init(store: WalletStore, bridge: ExtensionBridge) {
-        _store = ObservedObject(wrappedValue: store)
-        _bridge = ObservedObject(wrappedValue: bridge)
-        _ceremony = StateObject(wrappedValue: PotCeremonyController(store: store, bridge: bridge))
-    }
-
-    @State private var showStartPot = false
     @State private var showReceive = false
     @State private var showSend = false
+    @State private var showGift = false
     @State private var showSettings = false
-    @State private var showPots = false
-    private var pots: [VaultRecord] { VaultStore().all().filter { !$0.archived } }
-    /// Every pot bound to the chat the app is currently open in.
-    private var chatPots: [VaultRecord] {
-        guard let key = bridge.chatKey else { return [] }
-        return pots.filter { $0.chatKey == key }
-    }
-    /// Pots not already surfaced as this chat's banners.
-    private var otherPots: [VaultRecord] {
-        let here = Set(chatPots.map(\.id))
-        return pots.filter { !here.contains($0.id) }
-    }
-
-    private var potsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(chatPots.isEmpty ? "Shared Pots" : "Other Pots")
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
-                    .foregroundStyle(.secondary).textCase(.uppercase)
-                Spacer()
-                Button("See all") { showPots = true }
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
-            }
-            .padding(.horizontal, 20)
-            ForEach(otherPots.prefix(3)) { record in
-                Button { showPots = true } label: {
-                    HStack(spacing: 12) {
-                        Text(potEmoji(for: record.name))
-                            .font(.system(size: 26))
-                            .frame(width: 44, height: 44)
-                            .background(Circle().fill(Brand.subtleGradient))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(record.name)
-                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text("\(record.memberCount) people · any \(record.threshold) approve")
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.quaternary)
-                    }
-                    .padding(.horizontal, 20).padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-    private func chatPotBanner(_ pot: VaultRecord, showEyebrow: Bool = true) -> some View {
-        Button { showPots = true } label: {
-            HStack(spacing: 12) {
-                Text(potEmoji(for: pot.name))
-                    .font(.system(size: 30))
-                    .frame(width: 48, height: 48)
-                    .background(Circle().fill(Color.white.opacity(0.25)))
-                VStack(alignment: .leading, spacing: 2) {
-                    if showEyebrow {
-                        HStack(spacing: 6) {
-                            Text("This chat's pot")
-                                .font(.system(.caption2, design: .rounded).weight(.bold))
-                                .foregroundStyle(.white.opacity(0.9)).textCase(.uppercase)
-                            if bridge.chatParticipantCount > 0 {
-                                Text("· \(bridge.chatParticipantCount) here")
-                                    .font(.system(.caption2, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(.white.opacity(0.75))
-                            }
-                        }
-                    }
-                    Text(pot.name)
-                        .font(.system(.headline, design: .rounded).weight(.bold))
-                        .foregroundStyle(.white)
-                    RosterStrip(record: pot)
-                        .environment(\.colorScheme, .dark)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .bold)).foregroundStyle(.white.opacity(0.9))
-            }
-            .padding(14)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Brand.gradient))
-        }
-        .buttonStyle(.plain)
-    }
 
     @AppStorage("passkeyNudgeDismissed.v1") private var passkeyNudgeDismissed = false
     @State private var speedingUp = false
@@ -129,33 +38,6 @@ struct HomeView: View {
             actionRow
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
-
-            // This chat has one or more pots → surface them right by the
-            // balance, the first thing you'd look for when the group is
-            // talking money.
-            if !chatPots.isEmpty, !bridge.isCompact {
-                VStack(spacing: 10) {
-                    if chatPots.count > 1 {
-                        Text("This chat's pots")
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
-                            .foregroundStyle(.secondary).textCase(.uppercase)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    ForEach(chatPots) { pot in chatPotBanner(pot, showEyebrow: chatPots.count == 1) }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 14)
-            }
-
-            // Start a pot right here in the chat, over iMessage (no server).
-            if ceremony.canStart, chatPots.isEmpty, !bridge.isCompact {
-                Button { showStartPot = true } label: {
-                    Label("Start a pot in this chat", systemImage: "plus.circle.fill")
-                }
-                .buttonStyle(ProminentButtonStyle())
-                .padding(.horizontal, 20)
-                .padding(.top, 14)
-            }
 
             if !store.backupInICloud {
                 InfoBanner(
@@ -212,12 +94,6 @@ struct HomeView: View {
                     .padding(.top, 12)
             }
 
-            if !bridge.isCompact, !otherPots.isEmpty {
-                potsSection
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-            }
-
             if !bridge.isCompact {
                 activity
                     .padding(.top, 18)
@@ -225,34 +101,14 @@ struct HomeView: View {
 
             Spacer(minLength: 0)
         }
-        .sheet(isPresented: $showPots) {
-            PotsView(store: store, chatKey: bridge.chatKey, chatParticipantCount: bridge.chatParticipantCount,
-                     onRefresh: { record in showPots = false; ceremony.refresh(from: record) })
-        }
-        .sheet(isPresented: $showStartPot) {
-            StartPotSheet { name, emoji in ceremony.create(name: name, emoji: emoji) }
-        }
-        .sheet(isPresented: Binding(
-            get: { ceremony.presentSetup },
-            set: { if !$0 { ceremony.dismissSetup() } }
-        )) {
-            if let c = ceremony.coordinator {
-                SettingUpPotView(
-                    coordinator: c,
-                    emoji: c.config.emoji ?? potEmoji(for: c.config.name),
-                    onOpen: { ceremony.dismissSetup() },
-                    onClose: { ceremony.dismissSetup() })
-            }
-        }
-        // Note: we intentionally do NOT cover the compose field with the pot
-        // detail while a ceremony is in flight — the user needs to tap Send on
-        // the staged invite card. The pot appears in "This chat's pots" once
-        // setup completes; tap it there to open the detail.
         .sheet(isPresented: $showReceive) {
             ReceiveView(store: store, bridge: bridge)
         }
         .sheet(isPresented: $showSend) {
             SendView(store: store, bridge: bridge, prefill: nil)
+        }
+        .sheet(isPresented: $showGift) {
+            SendView(store: store, bridge: bridge, prefill: nil, mode: .gift)
         }
         .sheet(item: incomingCard) { card in
             switch card.kind {
@@ -299,56 +155,89 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 10) {
-                Text("\(Format.btc(store.balance.totalSats)) BTC")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-
-                if let usd = store.usdApprox(store.balance.totalSats) {
-                    Text(usd)
-                        .font(.system(.caption, design: .rounded).weight(.medium))
-                        .foregroundStyle(.secondary)
+            // BTC + fiat on one line; the pending pill joins them when it
+            // fits and drops to its own line when the figures are wide.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    fiatLine
+                    pendingPill
+                    syncIndicator
                 }
-
-                if store.balance.pendingSats > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "clock.fill").font(.system(size: 8))
-                        Text("\(Format.sats(store.balance.pendingSats)) pending")
+                VStack(spacing: 5) {
+                    HStack(spacing: 10) {
+                        fiatLine
+                        syncIndicator
                     }
-                    .font(.system(.caption2, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Brand.orangeDeep)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Brand.orange.opacity(0.12)))
-                }
-
-                if store.isSyncing {
-                    ProgressView().controlSize(.mini)
+                    pendingPill
                 }
             }
         }
         .frame(maxWidth: .infinity)
     }
 
+    private var fiatLine: some View {
+        HStack(spacing: 10) {
+            Text("\(Format.btc(store.balance.totalSats)) BTC")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+            if let usd = store.usdApprox(store.balance.totalSats) {
+                Text(usd)
+                    .font(.system(.caption, design: .rounded).weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private var pendingPill: some View {
+        if store.balance.pendingSats > 0 {
+            HStack(spacing: 3) {
+                Image(systemName: "clock.fill").font(.system(size: 8))
+                Text("\(Format.sats(store.balance.pendingSats)) pending")
+            }
+            .lineLimit(1)
+            .font(.system(.caption2, design: .rounded).weight(.semibold))
+            .foregroundStyle(Brand.orangeDeep)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Brand.orange.opacity(0.12)))
+        }
+    }
+
+    @ViewBuilder
+    private var syncIndicator: some View {
+        if store.isSyncing {
+            ProgressView().controlSize(.mini)
+        } else if store.syncStale {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Couldn't reach the network; showing the last known balance")
+        }
+    }
+
+    /// The three things the app does, side by side. Receive is the filled
+    /// tile because it is where a new wallet starts; Send and Gift wake up
+    /// once there is something to spend.
     private var actionRow: some View {
-        HStack(spacing: 12) {
-            Button {
+        let hasFunds = store.balance.totalSats > 0
+        return HStack(spacing: 10) {
+            ActionTile(title: "Receive", systemImage: "arrow.down.left", filled: true) {
                 bridge.requestExpanded()
                 showReceive = true
-            } label: {
-                Label("Receive", systemImage: "arrow.down.left")
             }
-            .buttonStyle(ProminentButtonStyle())
-
-            Button {
+            ActionTile(title: "Send", systemImage: "arrow.up.right") {
                 bridge.requestExpanded()
                 showSend = true
-            } label: {
-                Label("Send", systemImage: "arrow.up.right")
             }
-            .buttonStyle(QuietButtonStyle())
-            .disabled(store.balance.totalSats == 0)
-            .opacity(store.balance.totalSats == 0 ? 0.45 : 1)
+            .disabled(!hasFunds)
+            ActionTile(title: "Gift", systemImage: "gift.fill", tint: .purple) {
+                bridge.requestExpanded()
+                showGift = true
+            }
+            .disabled(!hasFunds)
         }
     }
 
@@ -457,7 +346,7 @@ struct HomeView: View {
             IconBubble(systemName: "sparkles", size: 46)
             Text("No activity yet")
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
-            Text("Tap **Receive** to share a payment\nrequest in this conversation.")
+            Text("Tap **Receive** to get your first sats.\nThen **Send** to an address, or **Gift** some\nto anyone in this chat — no wallet needed.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

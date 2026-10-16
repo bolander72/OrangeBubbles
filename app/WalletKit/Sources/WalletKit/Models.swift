@@ -87,11 +87,16 @@ public struct BackupEnvelope: Codable, Equatable, Sendable {
 public struct WalletBalance: Equatable, Sendable {
     public var confirmedSats: UInt64
     public var pendingSats: UInt64
+    /// What a send can draw on right now: confirmed coins plus change from
+    /// our own unconfirmed transactions ("trusted pending"). Unconfirmed
+    /// payments from other people are excluded until they are mined.
+    public var spendableSats: UInt64
     public var totalSats: UInt64 { confirmedSats + pendingSats }
 
-    public init(confirmedSats: UInt64, pendingSats: UInt64) {
+    public init(confirmedSats: UInt64, pendingSats: UInt64, spendableSats: UInt64? = nil) {
         self.confirmedSats = confirmedSats
         self.pendingSats = pendingSats
+        self.spendableSats = spendableSats ?? confirmedSats
     }
 }
 
@@ -139,6 +144,10 @@ public enum WalletKitError: LocalizedError {
     case insufficientFunds
     case amountBelowDust
     case networkUnreachable
+    /// The network answered and said no (bad inputs, fee too low, …).
+    /// Distinct from `networkUnreachable` so failover doesn't retry it
+    /// and the user sees the real reason instead of "check your connection".
+    case transactionRejected(String)
     case feeBumpNotPossible(String)
     case backupNotFound
     case backupCorrupted(String)
@@ -152,6 +161,7 @@ public enum WalletKitError: LocalizedError {
         case .insufficientFunds: return "Not enough funds to cover the amount plus network fees."
         case .amountBelowDust: return "Amount is too small to send on the Bitcoin network — the minimum is \(dustLimitSats) sats."
         case .networkUnreachable: return "Couldn't reach the Bitcoin network. Check your connection and try again."
+        case .transactionRejected(let why): return "The Bitcoin network rejected this transaction: \(why)"
         case .feeBumpNotPossible(let why): return "Can't speed this payment up: \(why)"
         case .backupNotFound: return "No wallet backup found in iCloud."
         case .backupCorrupted(let why): return "Wallet backup could not be read: \(why)"

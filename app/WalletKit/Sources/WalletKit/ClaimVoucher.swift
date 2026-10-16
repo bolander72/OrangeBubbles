@@ -68,7 +68,7 @@ public struct ClaimVoucher: Codable, Equatable, Sendable, Identifiable {
             )
         }
 
-        let send = try engine.createSignedDrain(to: destination, feeRateSatPerVb: feeRateSatPerVb)
+        let send = try engine.createSignedDrain(to: destination, feeRateSatPerVb: feeRateSatPerVb, includeUntrusted: true)
         let txid = try engine.broadcast(send, esploraURL: esploraURL)
         return (txid, send.details.amountSats)
     }

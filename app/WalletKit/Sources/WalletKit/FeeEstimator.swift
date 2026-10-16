@@ -16,7 +16,7 @@ public struct FeeTiers: Equatable, Sendable, Codable {
 public struct FeeEstimator: Sendable {
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = BoundedSession.shared) {
         self.session = session
     }
 

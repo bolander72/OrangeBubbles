@@ -36,7 +36,8 @@ struct ReceiveView: View {
                 }
                 .padding(20)
             }
-            .navigationTitle("Receive Bitcoin")
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("Receive")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -112,29 +113,10 @@ struct ReceiveView: View {
     }
 
     private var amountField: some View {
-        VStack(spacing: 6) {
-            TextField("Amount in sats (optional)", text: $amountText)
-                .keyboardType(.numberPad)
-                .font(.system(.body, design: .rounded))
-                .multilineTextAlignment(.center)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color(.secondarySystemBackground))
-                )
+        VStack(alignment: .leading, spacing: 6) {
+            FieldLabel("Request an amount · optional")
+            AmountField(text: $amountText, store: store, emptyHint: "Leave empty to let them choose")
                 .onChange(of: amountText) { _, _ in applyAmount() }
-
-            if let sats = request?.amountSats, sats > 0 {
-                HStack(spacing: 8) {
-                    Text("\(Format.btc(sats)) BTC")
-                        .font(.system(.caption, design: .monospaced))
-                    if let usd = store.usdApprox(sats) {
-                        Text(usd)
-                            .font(.system(.caption, design: .rounded).weight(.medium))
-                    }
-                }
-                .foregroundStyle(.secondary)
-            }
         }
     }
 

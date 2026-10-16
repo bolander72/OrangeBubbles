@@ -22,6 +22,8 @@ final class WalletStore: ObservableObject {
     @Published private(set) var feeTiers: FeeTiers = .fallback
     @Published private(set) var isSyncing = false
     @Published var lastError: String?
+    /// True when the most recent sync attempt failed; balance shown is cached.
+    @Published var syncStale = false
     /// Set when the user taps a payment card in the transcript.
     @Published var incomingRequest: IncomingCard?
     /// False when iCloud is unreachable and the backup only exists on this
@@ -65,7 +67,7 @@ final class WalletStore: ObservableObject {
 
     func start() async {
         guard !started else {
-            if engine != nil { await refresh() }
+            if engine != nil { await refresh(quiet: true) }
             return
         }
         started = true
@@ -81,6 +83,14 @@ final class WalletStore: ObservableObject {
 
     private var autoRefreshTask: Task<Void, Never>?
     private var hasLoadedOnce = false
+    /// The one network sync allowed at a time. A refresh that times out
+    /// leaves its BDK sync running (it can't be cancelled); starting another
+    /// on top only deepens a rate-limit hole, so later refreshes join this
+    /// one instead.
+    private var syncInFlight: Task<Void, Error>?
+    /// Index of the Esplora endpoint that last answered; failover starts
+    /// there instead of re-trying a throttled primary on every call.
+    private var preferredEsploraIndex = 0
 
     /// Polls the chain every few seconds while the extension is on screen,
     /// so incoming payments appear without closing and reopening. Started
@@ -92,7 +102,9 @@ final class WalletStore: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 guard !Task.isCancelled else { break }
-                await self?.refresh()
+                // Background ticks fail quietly: a flaky endpoint every
+                // 12 s must not pop a modal while someone is mid-task.
+                await self?.refresh(quiet: true)
             }
         }
     }
@@ -115,7 +127,10 @@ final class WalletStore: ObservableObject {
                 // Fast path: this device already holds the wallet.
                 try await bootEngine(with: cached)
                 phase = .ready
-                await refresh()
+                // Opening the app is not a request to talk to the network:
+                // a slow endpoint shows the cached balance plus the stale
+                // marker, never a modal. Pull-to-refresh stays loud.
+                await refresh(quiet: true)
                 return
             }
             // Everything touching the ubiquity container must stay off the
@@ -192,27 +207,51 @@ final class WalletStore: ObservableObject {
 
     // MARK: - Chain state
 
-    func refresh(fullScan: Bool = false) async {
+    /// `quiet` suppresses the error alert on sync failure — used by the
+    /// auto-refresh loop, where the cached state simply stays on screen and
+    /// `syncStale` lets the UI hint that it is not live.
+    func refresh(fullScan: Bool = false, quiet: Bool = false) async {
         guard let engine, !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
 
+        // Show what we already know before touching the network: the BDK
+        // cache has the last balance and history, and a slow or hung
+        // endpoint must not leave Home on "0 sats / No activity yet".
+        if !hasLoadedOnce {
+            balance = engine.balance()
+            transactions = engine.transactions()
+        }
+
         do {
-            try await withTimeout(seconds: 25) {
-                try await self.withEsploraFailover { esplora in
-                    try await Self.offMain { try engine.sync(esploraURL: esplora, fullScan: fullScan) }
+            if syncInFlight == nil || fullScan {
+                let sync = Task {
+                    try await self.withEsploraFailover { esplora in
+                        try await Self.offMain { try engine.sync(esploraURL: esplora, fullScan: fullScan) }
+                    }
                 }
+                syncInFlight = sync
+                Task { _ = try? await sync.value; if self.syncInFlight == sync { self.syncInFlight = nil } }
             }
+            let sync = syncInFlight!
+            try await withTimeout(seconds: 25) { try await sync.value }
+            syncStale = false
         } catch {
             // Sync failures/timeouts are non-fatal: show cached state. The
             // isSyncing flag ALWAYS clears (defer), so the spinner can't wedge.
-            report(error)
+            syncStale = true
+            if !quiet { report(error) }
         }
         let previousTotal = balance.totalSats
         balance = engine.balance()
         transactions = engine.transactions()
-        feeTiers = await feeEstimator.tiers(esploraURL: chain.esploraURL, feesURL: chain.feesURL)
-        usdPerBTC = await priceOracle.usdPerBTC() ?? usdPerBTC
+        // Side data, fetched together so a slow fee endpoint doesn't delay
+        // the price (both are bounded to a few seconds by BoundedSession).
+        let preferredEsplora = chain.esploraURLs[preferredEsploraIndex]
+        async let tiersFetch = feeEstimator.tiers(esploraURL: preferredEsplora, feesURL: chain.feesURL)
+        async let priceFetch = priceOracle.usdPerBTC()
+        feeTiers = await tiersFetch
+        usdPerBTC = await priceFetch ?? usdPerBTC
 
         // Keep the handed-out (Siri/widget) addresses revealed & backed
         // up — before publishing, so the snapshot is never stale.
@@ -351,34 +390,61 @@ final class WalletStore: ObservableObject {
         let bumped = try await Self.offMain {
             try engine.createFeeBump(txid: txid, feeRateSatPerVb: rate)
         }
-        let newTxid = try await withEsploraFailover { esplora in
-            try await Self.offMain { try engine.broadcast(bumped, esploraURL: esplora) }
+        let newTxid = try await withTimeout(seconds: 30) {
+            try await self.withEsploraFailover { esplora in
+                try await Self.offMain { try engine.broadcast(bumped, esploraURL: esplora) }
+            }
         }
-        await refresh()
+        settleAfterChainWrite()
         return newTxid
     }
 
     func broadcast(_ send: SignedSend) async throws -> String {
         guard let engine else { throw WalletKitError.internalError("wallet not ready") }
-        let txid = try await withEsploraFailover { esplora in
-            try await Self.offMain { try engine.broadcast(send, esploraURL: esplora) }
+        let txid = try await withTimeout(seconds: 30) {
+            try await self.withEsploraFailover { esplora in
+                try await Self.offMain { try engine.broadcast(send, esploraURL: esplora) }
+            }
         }
         recordPaidAddress(send.details.destinationAddress)
-        await refresh()
+        settleAfterChainWrite()
         return txid
     }
 
+    /// After a broadcast or sweep succeeded: show the engine's view of the
+    /// result right away (the engine already recorded the spend locally),
+    /// and let the network catch up in the background. The success screen
+    /// must never wait on a slow endpoint, and a flaky follow-up sync is
+    /// not the action's error.
+    private func settleAfterChainWrite() {
+        if let engine {
+            balance = engine.balance()
+            transactions = engine.transactions()
+            publishSnapshot()
+        }
+        Task { await self.refresh(quiet: true) }
+    }
+
     /// Runs `operation` against each same-chain Esplora endpoint in order,
-    /// moving on only for connectivity failures (rate limits, outages).
-    /// Any other error is the operation's own problem and surfaces as-is.
-    private func withEsploraFailover<T>(
-        _ operation: (URL) async throws -> T
+    /// moving on only for connectivity failures (rate limits, outages) —
+    /// including an endpoint that simply never answers, which is what a
+    /// throttled public Esplora looks like from here. Starts from the
+    /// endpoint that last worked. Any other error is the operation's own
+    /// problem and surfaces as-is.
+    private func withEsploraFailover<T: Sendable>(
+        perEndpointSeconds: Double = 15,
+        _ operation: @escaping @Sendable (URL) async throws -> T
     ) async throws -> T {
-        for (index, url) in chain.esploraURLs.enumerated() {
+        let urls = chain.esploraURLs
+        let order = Array(urls.indices).map { ($0 + preferredEsploraIndex) % urls.count }
+        for (position, index) in order.enumerated() {
+            let url = urls[index]
             do {
-                return try await operation(url)
+                let result = try await withTimeout(seconds: perEndpointSeconds) { try await operation(url) }
+                preferredEsploraIndex = index
+                return result
             } catch let error as WalletKitError {
-                guard case .networkUnreachable = error, index < chain.esploraURLs.count - 1 else {
+                guard case .networkUnreachable = error, position < order.count - 1 else {
                     throw error
                 }
             }
@@ -457,7 +523,7 @@ final class WalletStore: ObservableObject {
         }
         outstandingGifts.removeAll { $0.voucher.address == voucher.address }
         saveGifts()
-        await refresh()
+        settleAfterChainWrite()
         return swept.sweptSats
     }
 
@@ -568,11 +634,6 @@ final class WalletStore: ObservableObject {
         backupInICloud = inICloud
     }
 
-    /// The current wallet mnemonic. Pots derive each member's FROST seed
-    /// from it (see PotMemberSeeds), so this is needed in all
-    /// configurations — not just the DEBUG vault lab.
-    var walletMnemonic: String? { secrets?.mnemonic }
-
     // MARK: - Helpers
 
     private func report(_ error: Error) {
@@ -586,16 +647,23 @@ final class WalletStore: ObservableObject {
 
     /// Runs `op` but throws if it exceeds `seconds` — guarantees refresh()
     /// completes so the syncing indicator never gets stuck on a hung call.
-    private func withTimeout<T: Sendable>(seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await op() }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw WalletKitError.networkUnreachable
+    ///
+    /// Deliberately NOT a task group: a group waits for every child before
+    /// it returns, and the child here is awaiting a blocking BDK/Esplora
+    /// call that can't be cancelled — so a group-based timeout "fired" but
+    /// never actually returned. This races a continuation instead; the
+    /// orphaned work finishes (or fails) on its own in the background.
+    private nonisolated func withTimeout<T: Sendable>(seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+            let once = ResumeOnce(continuation)
+            let work = Task {
+                do { once.resume(.success(try await op())) } catch { once.resume(.failure(error)) }
             }
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                once.resume(.failure(WalletKitError.networkUnreachable))
+                work.cancel()
+            }
         }
     }
 
@@ -603,6 +671,22 @@ final class WalletStore: ObservableObject {
         _ work: @escaping @Sendable () throws -> T
     ) async throws -> T {
         try await Task.detached(priority: .userInitiated) { try work() }.value
+    }
+}
+
+/// Resumes a continuation at most once, whichever racer gets there first.
+private final class ResumeOnce<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+
+    init(_ continuation: CheckedContinuation<T, Error>) { self.continuation = continuation }
+
+    func resume(_ result: Result<T, Error>) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(with: result)
     }
 }
 

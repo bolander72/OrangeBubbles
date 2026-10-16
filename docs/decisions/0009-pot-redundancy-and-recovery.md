@@ -1,6 +1,10 @@
 # ADR 0009: Pot redundancy & recovery — surviving lost phones and departed members
 
-**Status:** in progress (2026-08). Built: Layer 1 (iCloud-Keychain share
+**Status:** withdrawn (2026-10) — pots were removed from the codebase
+along with ADR 0008; see backlog item 11. Kept as the record of what was
+built and learned.
+
+Original status: in progress (2026-08). Built: Layer 1 (iCloud-Keychain share
 backup, opt-in device-only), the health model + warning card, Archive/Rejoin
 (the everyday action — silent, reversible, keeps the share), and a Refresh entry
 point that re-keys the chat's current members. Remaining: the automatic

@@ -20,16 +20,12 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .tint(Brand.orange)
-        .alert(
-            "Something went wrong",
-            isPresented: Binding(
-                get: { store.lastError != nil },
-                set: { if !$0 { store.lastError = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(store.lastError ?? "")
+        // Errors surface through UIKit on the top-most presented controller
+        // (see ExtensionBridge.presentError) so they appear over Send /
+        // Receive / card sheets instead of dismissing them.
+        .onChange(of: store.lastError) { _, message in
+            guard let message else { return }
+            bridge.presentError(message) { store.lastError = nil }
         }
     }
 }

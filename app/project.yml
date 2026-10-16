@@ -12,19 +12,13 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     # Set your Apple Developer team here (or in Xcode) to run on device.
     DEVELOPMENT_TEAM: B28G4GL96T
-    # The FROST xcframework (OBFrostFFI) ships an arm64-only simulator slice, so
-    # simulator builds are arm64-only (fine — all Apple Silicon). This lets a
-    # `generic/platform=iOS Simulator` build (as CI uses) link without demanding
-    # a nonexistent x86_64 slice.
-    "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
   configs:
     debug:
       # Debug builds run on signet (Mutinynet) — free test coins.
       WALLET_NETWORK: signet
     release:
       # TestFlight beta runs on signet — testers use free test-sats
-      # (signetfaucet.com) while FROST pots are still experimental.
-      # Flip back to `bitcoin` for the real launch.
+      # (signetfaucet.com). Flip back to `bitcoin` for the real launch.
       WALLET_NETWORK: signet
 
 packages:
@@ -39,11 +33,6 @@ targets:
       - HostApp
       - Shared
       - PasskeyShared
-      - path: MessagesExtension/Vault/VaultTransport.swift
-      - path: MessagesExtension/Vault/VaultCoordinator.swift
-      - path: MessagesExtension/Vault/VaultStore.swift
-      - path: MessagesExtension/Vault/CloudKitTransport.swift
-      - path: MessagesExtension/Vault/PendingCeremonyStore.swift
     dependencies:
       - target: MessagesExtension
       - target: WalletWidget
@@ -56,9 +45,7 @@ targets:
       path: HostApp/Info.plist
       properties:
         CFBundleDisplayName: OrangeBubbles
-        # BackgroundCeremonyResumer picks its chain from this key; without it
-        # the host app silently falls back to a compile-time default that can
-        # disagree with the extension's network.
+        # Keeps the host app on the same network as the extension.
         WalletNetwork: $(WALLET_NETWORK)
         CFBundleURLTypes:
           - CFBundleURLName: com.bolandcompany.orangebubbles
@@ -71,10 +58,6 @@ targets:
         # Store validation demands all four orientations (ITMS-90474).
         UIRequiresFullScreen: true
         ITSAppUsesNonExemptEncryption: false
-        # Silent CloudKit pushes wake the app to finish pot setup in the
-        # background (BackgroundCeremonyResumer).
-        UIBackgroundModes:
-          - remote-notification
         # iOS resolves an extension's privacy prompts through the
         # CONTAINING app — these must mirror the extension's strings or
         # camera/Face ID requests silently fail inside Messages.
@@ -86,17 +69,12 @@ targets:
     entitlements:
       path: HostApp/OrangeBubbles.entitlements
       properties:
-        # Silent push for background pot completion. Needs the Push
-        # Notifications capability enabled on the App ID (Xcode manages the
-        # dev/prod value); "development" here matches debug builds.
-        aps-environment: development
         com.apple.developer.icloud-container-identifiers:
           - iCloud.com.bolandcompany.orangebubbles
         com.apple.developer.ubiquity-container-identifiers:
           - iCloud.com.bolandcompany.orangebubbles
         com.apple.developer.icloud-services:
           - CloudDocuments
-          - CloudKit
         com.apple.developer.associated-domains:
           - webcredentials:www.boland.co
           # developer-mode entry: lets dev builds bypass Apple's AASA CDN
@@ -134,11 +112,6 @@ targets:
           unlock, and send from your wallet.
         NSCameraUsageDescription: >-
           The camera is used to scan Bitcoin QR codes when sending a payment.
-        NSLocalNetworkUsageDescription: >-
-          OrangeBubbles connects to a local test relay on your Mac during
-          development.
-        NSAppTransportSecurity:
-          NSAllowsLocalNetworking: true
         NSExtension:
           NSExtensionPointIdentifier: com.apple.message-payload-provider
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MessagesViewController
@@ -151,7 +124,6 @@ targets:
           - iCloud.com.bolandcompany.orangebubbles
         com.apple.developer.icloud-services:
           - CloudDocuments
-          - CloudKit
         com.apple.developer.associated-domains:
           - webcredentials:www.boland.co
           # developer-mode entry: lets dev builds bypass Apple's AASA CDN

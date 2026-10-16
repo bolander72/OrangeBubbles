@@ -26,7 +26,7 @@ public struct TxConfirmation: Equatable, Sendable {
 public struct StatusProbe: Sendable {
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = BoundedSession.shared) {
         self.session = session
     }
 

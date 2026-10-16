@@ -137,15 +137,20 @@ devices (simulator is lax, hiding it). Snapshot now lives under
 Library/Application Support with a legacy-root read fallback, and write
 failures log instead of vanishing into `try?`.
 
-## 11. Shared Vaults (group-chat multisig)
+## 11. Shared Pots (group-chat multisig) — removed 2026-10
 
-Fully specced in [ADR 0008](decisions/0008-shared-vaults.md): k-of-n
-"shared accounts" native to iMessage group chats — P2WSH v1 now,
-FROST v2 behind an explicit readiness gate (audited implementation,
-reviewed nonce state machine, DKG-over-cards spec). The single biggest
-feature on the board; likely OrangeBubbles' defining capability.
+Specced in [ADR 0008](decisions/0008-shared-vaults.md) and
+[ADR 0009](decisions/0009-pot-redundancy-and-recovery.md), and built as
+far as a working FROST ceremony over CloudKit with resumable DKG, share
+backup, archive/rejoin and re-keying. **All of it was removed from the
+codebase in October 2026** (commits before `d9f3532` hold the last
+working version) so the app can focus on doing three things really well:
+send, receive, and async claimable gifts. The ADRs stay as the record of
+what was learned.
 
-**Trigger to build:** Mike's go on the P2WSH-first sequencing.
+**Trigger to revisit:** the core three flows are polished and shipped,
+and there is real user pull for shared accounts. Start from the ADRs and
+the git history, not from scratch.
 
 ## 12. Multi-device same-wallet writes — accepted behavior
 
