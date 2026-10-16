@@ -36,13 +36,19 @@ struct ReceiveAddressIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
-        guard
-            let snapshot = SharedSnapshot.load(),
-            let address = snapshot.upcomingReceiveAddresses.first
-        else {
+        guard let snapshot = SharedSnapshot.load() else {
             return .result(
                 value: "",
                 dialog: "Your wallet hasn't been opened yet — open OrangeBubbles in Messages first."
+            )
+        }
+        // Each ask consumes a reserved address; the same one is never
+        // spoken twice. The extension replaces consumed ones on its next
+        // refresh, so running out just means "open Messages once".
+        guard let address = snapshot.issueReceiveAddress() else {
+            return .result(
+                value: "",
+                dialog: "I've handed out all the addresses I had ready. Open OrangeBubbles in Messages to get more."
             )
         }
         return .result(

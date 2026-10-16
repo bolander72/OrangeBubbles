@@ -22,9 +22,12 @@ struct SharedSnapshot: Codable {
     var recent: [Activity]
     /// NetworkKind raw value ("bitcoin", "signet", …).
     var network: String
-    /// Fresh, never-revealed receive addresses (peeked). Consumers take
-    /// the first; staleness just means address reuse *within our own
-    /// wallet*, which a full scan absorbs.
+    /// Receive addresses reserved for the host app (Siri / Shortcuts): each
+    /// is revealed and watched by the wallet, never shown anywhere else.
+    /// Consumers must take one through `SharedSnapshot.issueReceiveAddress`,
+    /// which records it as handed out so it is never given to two people;
+    /// the extension marks issued addresses used on its next refresh and
+    /// replaces them.
     var upcomingReceiveAddresses: [String]
     var usdPerBTC: Double?
     var updatedAt: Date
@@ -81,6 +84,36 @@ struct SharedSnapshot: Codable {
             // Loud, not silent — this exact failure hid for weeks.
             NSLog("SharedSnapshot: write failed: \(error)")
         }
+    }
+
+    // MARK: - Address hand-out ledger
+
+    /// Addresses the host app has handed out that the extension has not
+    /// yet marked used. Lives in the App Group defaults so both processes
+    /// see it.
+    private static let issuedKey = "issuedReceiveAddresses.v1"
+
+    private static var groupDefaults: UserDefaults? { UserDefaults(suiteName: appGroupID) }
+
+    static var issuedReceiveAddresses: [String] {
+        groupDefaults?.stringArray(forKey: issuedKey) ?? []
+    }
+
+    /// The next reserved address nobody has been given, recorded as issued
+    /// before it is returned. nil when every reserved address is spoken
+    /// for — the caller should send the user to Messages, where a refresh
+    /// reserves more.
+    func issueReceiveAddress() -> String? {
+        let issued = Set(Self.issuedReceiveAddresses)
+        guard let next = upcomingReceiveAddresses.first(where: { !issued.contains($0) }) else { return nil }
+        Self.groupDefaults?.set(Array(issued) + [next], forKey: Self.issuedKey)
+        return next
+    }
+
+    /// Called by the extension once it has marked these addresses used.
+    static func clearIssued(_ addresses: [String]) {
+        let remaining = issuedReceiveAddresses.filter { !addresses.contains($0) }
+        groupDefaults?.set(remaining, forKey: issuedKey)
     }
 
     // MARK: - Display helpers (shared by widget + intents)

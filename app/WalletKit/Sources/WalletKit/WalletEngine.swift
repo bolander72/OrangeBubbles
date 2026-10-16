@@ -13,6 +13,12 @@ public final class WalletEngine: @unchecked Sendable {
     public let scriptType: ScriptType
 
     private let wallet: Wallet
+    /// Highest receive index ever handed out, from `WalletSecrets`. Every
+    /// address at or below it has been shown to someone and is never
+    /// offered again. Hand-outs (Receive, claims, Siri) all consume the
+    /// same ordered queue of revealed addresses above this mark, so there
+    /// is one source of truth and nothing is wasted.
+    public private(set) var handedOutReceiveIndex: UInt32?
     /// True when no chain cache existed for this wallet and one was just
     /// created. Such a wallet knows nothing about change addresses or
     /// history, so its first sync must be a full scan, not an incremental
@@ -101,6 +107,22 @@ public final class WalletEngine: @unchecked Sendable {
             self.startedFromEmptyCache = true
         }
 
+        // Secrets written before the hand-out mark existed carry only the
+        // revealed-index hint. Anything revealed back then may have been
+        // shown to someone, so treat all of it as handed out: a few unused
+        // addresses are skipped once, and nothing is ever offered twice.
+        let legacyTop: UInt32? = {
+            let fromHint: UInt32? = secrets.receiveIndexHint > 0 ? secrets.receiveIndexHint : nil
+            let fromCache = wallet.derivationIndex(keychain: .external)
+            switch (fromHint, fromCache) {
+            case let (h?, c?): return max(h, c)
+            case let (h?, nil): return h
+            case let (nil, c?): return c
+            case (nil, nil): return nil
+            }
+        }()
+        self.handedOutReceiveIndex = secrets.handedOutReceiveIndex ?? legacyTop
+
         // Restore hint: make sure previously revealed addresses are watched
         // before the first sync. Capped: every revealed address costs a
         // request on every sync, and a hint far beyond what this cache has
@@ -145,32 +167,77 @@ public final class WalletEngine: @unchecked Sendable {
 
     // MARK: - Addresses
 
-    /// Reveals and returns the next unused receive address.
-    public func nextReceiveAddress() throws -> (address: String, index: UInt32) {
-        let info = wallet.revealNextAddress(keychain: .external)
-        try persist()
-        return (info.address.description, info.index)
+    /// Revealed, unpaid receive addresses nobody has been given yet, in
+    /// index order. Hand-outs take from the front.
+    private func handOutQueue() -> [AddressInfo] {
+        let floor = handedOutReceiveIndex.map { $0 + 1 } ?? 0
+        return wallet.listUnusedAddresses(keychain: .external).filter { $0.index >= floor }
     }
 
-    /// Upcoming receive addresses for the shared snapshot (Siri/widget).
-    /// These are REVEALED, not peeked: an address we hand out must be
-    /// watched by incremental sync, or money sent to it is invisible
-    /// until a full rescan.
+    private func ensureQueue(atLeast count: Int) {
+        let have = handOutQueue().count
+        guard have < count else { return }
+        let top = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
+        _ = wallet.revealAddressesTo(keychain: .external, index: top + UInt32(count - have) - 1)
+    }
+
+    private func noteHandedOut(_ index: UInt32) {
+        handedOutReceiveIndex = max(handedOutReceiveIndex ?? 0, index)
+        _ = wallet.markUsed(keychain: .external, index: index)
+    }
+
+    /// Hands out the next receive address. "Handed out" is final: once an
+    /// address has been on a screen, in a card or in Siri's mouth it is
+    /// never offered again, whether or not money arrives (it stays
+    /// revealed, so sync keeps watching it). `excluding` lets the caller
+    /// skip addresses another process has issued but not yet reconciled
+    /// (the host app's Siri ledger).
+    public func nextReceiveAddress(excluding: Set<String> = []) throws -> (address: String, index: UInt32) {
+        var attempts = 0
+        while attempts < 8 {
+            ensureQueue(atLeast: 1 + excluding.count)
+            if let info = handOutQueue().first(where: { !excluding.contains($0.address.description) }) {
+                noteHandedOut(info.index)
+                try persist()
+                return (info.address.description, info.index)
+            }
+            attempts += 1
+        }
+        throw WalletKitError.internalError("could not find a fresh receive address")
+    }
+
+    /// Records that the host app (Siri / Shortcuts) handed `address` out.
+    /// Returns false if it is not one of this wallet's revealed receive
+    /// addresses.
+    @discardableResult
+    public func markReceiveAddressHandedOut(_ address: String) throws -> Bool {
+        let top = wallet.derivationIndex(keychain: .external) ?? 0
+        guard wallet.derivationIndex(keychain: .external) != nil else { return false }
+        for index in 0...top where wallet.peekAddress(keychain: .external, index: index).address.description == address {
+            noteHandedOut(index)
+            try persist()
+            return true
+        }
+        return false
+    }
+
+    /// Upcoming receive addresses reserved for the host app (Siri /
+    /// Shortcuts), published in the shared snapshot. These are REVEALED,
+    /// not peeked: an address we hand out must be watched by incremental
+    /// sync, or money sent to it is invisible until a full rescan.
     ///
-    /// Idempotent: returns the newest `count` revealed-but-unused
+    /// Idempotent: returns the `count` revealed-but-not-yet-handed-out
     /// addresses and reveals more only when fewer than `count` exist. (An
     /// earlier version revealed `count` fresh ones past the top on every
     /// refresh, so the watched set grew by three per tick — hundreds of
-    /// addresses, each a request per sync.)
+    /// addresses, each a request per sync.) Because every address shown in
+    /// Receive or issued by Siri is marked used, nothing here can collide
+    /// with an address already given to someone.
     public func revealUpcomingReceiveAddresses(count: UInt32) throws -> [String] {
-        var unused = wallet.listUnusedAddresses(keychain: .external)
-        if unused.count < Int(count) {
-            let top = wallet.derivationIndex(keychain: .external).map { $0 + 1 } ?? 0
-            _ = wallet.revealAddressesTo(keychain: .external, index: top + (count - UInt32(unused.count)) - 1)
-            unused = wallet.listUnusedAddresses(keychain: .external)
-            try persist()
-        }
-        return unused.suffix(Int(count)).map { $0.address.description }
+        let before = wallet.derivationIndex(keychain: .external)
+        ensureQueue(atLeast: Int(count))
+        if wallet.derivationIndex(keychain: .external) != before { try persist() }
+        return handOutQueue().prefix(Int(count)).map { $0.address.description }
     }
 
     /// Highest revealed indexes — stored in the backup as restore hints.
