@@ -6,6 +6,7 @@ struct HomeView: View {
     @ObservedObject var bridge: ExtensionBridge
     @State private var showReceive = false
     @State private var showSend = false
+    @State private var showGift = false
     @State private var showSettings = false
 
     @AppStorage("passkeyNudgeDismissed.v1") private var passkeyNudgeDismissed = false
@@ -106,6 +107,9 @@ struct HomeView: View {
         .sheet(isPresented: $showSend) {
             SendView(store: store, bridge: bridge, prefill: nil)
         }
+        .sheet(isPresented: $showGift) {
+            SendView(store: store, bridge: bridge, prefill: nil, mode: .gift)
+        }
         .sheet(item: incomingCard) { card in
             switch card.kind {
             case .payment(let request, let isReceipt):
@@ -182,25 +186,26 @@ struct HomeView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// The three things the app does, side by side. Receive is the filled
+    /// tile because it is where a new wallet starts; Send and Gift wake up
+    /// once there is something to spend.
     private var actionRow: some View {
-        HStack(spacing: 12) {
-            Button {
+        let hasFunds = store.balance.totalSats > 0
+        return HStack(spacing: 10) {
+            ActionTile(title: "Receive", systemImage: "arrow.down.left", filled: true) {
                 bridge.requestExpanded()
                 showReceive = true
-            } label: {
-                Label("Receive", systemImage: "arrow.down.left")
             }
-            .buttonStyle(ProminentButtonStyle())
-
-            Button {
+            ActionTile(title: "Send", systemImage: "arrow.up.right") {
                 bridge.requestExpanded()
                 showSend = true
-            } label: {
-                Label("Send", systemImage: "arrow.up.right")
             }
-            .buttonStyle(QuietButtonStyle())
-            .disabled(store.balance.totalSats == 0)
-            .opacity(store.balance.totalSats == 0 ? 0.45 : 1)
+            .disabled(!hasFunds)
+            ActionTile(title: "Gift", systemImage: "gift.fill", tint: .purple) {
+                bridge.requestExpanded()
+                showGift = true
+            }
+            .disabled(!hasFunds)
         }
     }
 
@@ -309,7 +314,7 @@ struct HomeView: View {
             IconBubble(systemName: "sparkles", size: 46)
             Text("No activity yet")
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
-            Text("Tap **Receive** to share a payment\nrequest in this conversation.")
+            Text("Tap **Receive** to get your first sats.\nThen **Send** to an address, or **Gift** some\nto anyone in this chat — no wallet needed.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

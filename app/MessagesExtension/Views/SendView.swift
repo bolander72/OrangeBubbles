@@ -5,6 +5,9 @@ struct SendView: View {
     @ObservedObject var store: WalletStore
     @ObservedObject var bridge: ExtensionBridge
     let prefill: PaymentRequest?
+    /// Chosen by the caller: Home's Send tile vs Gift tile. A prefilled
+    /// request (tapped card) is always an address send.
+    var mode: SendMode = .address
 
     @Environment(\.dismiss) private var dismiss
 
@@ -17,10 +20,12 @@ struct SendView: View {
         case sentGift(ClaimVoucher)
     }
 
-    enum SendMode: String, CaseIterable {
-        case address = "To address"
-        case gift = "As a gift"
+    enum SendMode {
+        case address
+        case gift
     }
+
+    private var isGift: Bool { prefill == nil && mode == .gift }
 
     @State private var stage: Stage = .compose
     @State private var address = ""
@@ -30,9 +35,6 @@ struct SendView: View {
     /// Send Max: sweep every UTXO; the fee comes out of the total.
     @State private var sendMax = false
     @State private var showScanner = false
-    @State private var mode: SendMode = .address
-    @State private var showSmartAmount = false
-    @State private var smartAmountText = ""
 
     enum FeeChoice: String, CaseIterable, Identifiable {
         case slow = "Slow"
@@ -88,25 +90,6 @@ struct SendView: View {
                 apply(scannedOrPasted: code)
             }
         }
-        .alert("Describe the amount", isPresented: $showSmartAmount) {
-            TextField("e.g. $5, 0.001 btc, 21k sats", text: $smartAmountText)
-            Button("Use") {
-                let text = smartAmountText
-                smartAmountText = ""
-                Task {
-                    if let sats = await SmartAmountAI.parse(text, store: store) {
-                        amountText = String(sats)
-                        sendMax = false
-                        Haptics.tap()
-                    } else {
-                        store.lastError = "Couldn't understand that amount. Try \"$5\", \"0.001 btc\", or \"21000 sats\"."
-                    }
-                }
-            }
-            Button("Cancel", role: .cancel) { smartAmountText = "" }
-        } message: {
-            Text("Dollars, BTC, or sats — parsed on your device.")
-        }
         .interactiveDismissDisabled(isMidFlight)
     }
 
@@ -126,7 +109,7 @@ struct SendView: View {
 
     private var navigationTitle: String {
         switch stage {
-        case .compose: return mode == .gift ? "Send a Gift" : "Send Bitcoin"
+        case .compose: return isGift ? "Send a Gift" : "Send"
         case .review, .reviewGift: return "Confirm"
         case .broadcasting: return ""
         case .sent: return "Sent"
@@ -181,27 +164,14 @@ struct SendView: View {
     private var composeForm: some View {
         ScrollView {
             VStack(spacing: 16) {
-                if prefill == nil {
-                    Picker("Send mode", selection: $mode) {
-                        ForEach(SendMode.allCases, id: \.self) { m in
-                            Text(m.rawValue).tag(m)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                if mode == .gift {
-                    InfoBanner(
-                        systemName: "gift.fill",
-                        text: "A gift needs no address — the claim travels inside the message. Anyone who can read the message can claim it, so keep gifts casual-sized. You can take it back until it's claimed.",
-                        tint: .purple
-                    )
+                if isGift {
+                    giftIntro
                 }
 
                 // Destination
-                if mode == .address {
+                if !isGift {
                 VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel("To")
+                    FieldLabel("To")
                     HStack(spacing: 8) {
                         TextField("Bitcoin address", text: $address, axis: .vertical)
                             .font(.system(.footnote, design: .monospaced))
@@ -268,87 +238,38 @@ struct SendView: View {
 
                 // Amount
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        fieldLabel("Amount")
-                        Spacer()
-                        Button {
-                            showSmartAmount = true
-                        } label: {
-                            Image(systemName: "character.cursor.ibeam")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Brand.orangeDeep)
-                        }
-                        .accessibilityLabel("Type the amount in dollars, BTC, or words")
-                        .padding(.trailing, 4)
-                    }
-                    VStack(spacing: 4) {
-                        if sendMax {
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                Text("Everything")
-                                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                                    .foregroundStyle(Brand.gradient)
-                                Text("−fee")
-                                    .font(.system(.callout, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            Text("\(Format.sats(store.balance.confirmedSats)) sats minus the network fee")
-                                .font(.system(.caption, design: .rounded))
-                                .foregroundStyle(.secondary)
-                        } else {
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                TextField("0", text: $amountText)
-                                    .keyboardType(.numberPad)
-                                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                                    .multilineTextAlignment(.center)
-                                    .fixedSize(horizontal: true, vertical: false)
-                                    .accessibilityLabel("Amount in sats")
-                                Text("sats")
-                                    .font(.system(.callout, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
+                    FieldLabel(isGift ? "Gift amount" : "Amount")
 
-                            if let sats = parsedAmount {
-                                HStack(spacing: 8) {
-                                    Text("\(Format.btc(sats)) BTC")
-                                        .font(.system(.caption, design: .monospaced))
-                                    if let usd = store.usdApprox(sats) {
-                                        Text(usd)
-                                            .font(.system(.caption, design: .rounded).weight(.medium))
-                                    }
-                                }
-                                .foregroundStyle(.secondary)
-                            }
-                        }
+                    if sendMax {
+                        sendMaxField
+                    } else {
+                        AmountField(text: $amountText, store: store, tint: isGift ? .purple : Brand.orange)
                     }
-                    .padding(.vertical, 14)
-                    .background(fieldBackground)
 
                     HStack {
                         Text("Available: \(Format.sats(store.balance.confirmedSats)) sats")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        if mode == .address {
-                        Button {
-                            withAnimation(.spring(response: 0.25)) { sendMax.toggle() }
-                            Haptics.tap()
-                        } label: {
-                            Text(sendMax ? "Enter amount" : "Max")
-                                .font(.system(.caption, design: .rounded).weight(.bold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Capsule().fill(sendMax ? Brand.orange.opacity(0.25) : Brand.orange.opacity(0.13)))
-                                .foregroundStyle(Brand.orangeDeep)
-                        }
-                        .accessibilityLabel(sendMax ? "Switch to entering an amount" : "Send entire balance")
+                        if !isGift {
+                            Button {
+                                withAnimation(.spring(response: 0.25)) { sendMax.toggle() }
+                                Haptics.tap()
+                            } label: {
+                                Text(sendMax ? "Enter amount" : "Max")
+                                    .font(.system(.caption, design: .rounded).weight(.bold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Capsule().fill(sendMax ? Brand.orange.opacity(0.25) : Brand.orange.opacity(0.13)))
+                                    .foregroundStyle(Brand.orangeDeep)
+                            }
+                            .buttonStyle(PressableStyle())
+                            .accessibilityLabel(sendMax ? "Switch to entering an amount" : "Send entire balance")
                         }
                     }
                     .padding(.horizontal, 4)
-                    .onChange(of: mode) { _, _ in sendMax = false }
 
-                    if dustWarning, mode == .address {
+                    if dustWarning, !isGift {
                         Text("Minimum send is \(Format.sats(dustLimitSats)) sats.")
                             .font(.caption)
                             .foregroundStyle(.red)
@@ -364,7 +285,7 @@ struct SendView: View {
 
                 // Fee
                 VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel("Network fee")
+                    FieldLabel("Network fee")
                     HStack(spacing: 8) {
                         ForEach(FeeChoice.allCases) { choice in
                             feeOption(choice)
@@ -385,7 +306,7 @@ struct SendView: View {
                     if working {
                         ProgressView().tint(.white)
                     } else {
-                        Label("Review with Face ID", systemImage: "faceid")
+                        Label(isGift ? "Review gift with Face ID" : "Review with Face ID", systemImage: "faceid")
                     }
                 }
                 .buttonStyle(ProminentButtonStyle())
@@ -398,12 +319,45 @@ struct SendView: View {
         .scrollDismissesKeyboard(.interactively)
     }
 
-    private func fieldLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(.caption, design: .rounded).weight(.semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-            .padding(.leading, 4)
+    /// What a gift is, in one breath, before the amount is asked for.
+    private var giftIntro: some View {
+        HStack(alignment: .top, spacing: 12) {
+            IconBubble(systemName: "gift.fill", tint: .purple, size: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("No address needed")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                Text("The claim rides inside the message — they don't need a wallet yet. Anyone who can read this chat can claim it, so keep it casual-sized. Take it back any time before it's claimed.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.purple.opacity(0.08))
+        )
+    }
+
+    /// Replaces the amount field while Send Max is on.
+    private var sendMaxField: some View {
+        VStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Everything")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundStyle(Brand.gradient)
+                Text("−fee")
+                    .font(.system(.callout, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(Format.sats(store.balance.confirmedSats)) sats minus the network fee")
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity)
+        .background(fieldBackground)
     }
 
     private var fieldBackground: some View {
@@ -454,14 +408,14 @@ struct SendView: View {
     }
 
     private var canReview: Bool {
-        if mode == .gift {
+        if isGift {
             return parsedAmount.map { $0 >= ClaimVoucher.minimumSats } ?? false
         }
         return addressIsValid && (sendMax || (parsedAmount.map { $0 >= dustLimitSats } ?? false))
     }
 
     private var giftTooSmall: Bool {
-        guard mode == .gift, let sats = parsedAmount else { return false }
+        guard isGift, let sats = parsedAmount else { return false }
         return sats < ClaimVoucher.minimumSats
     }
 
@@ -476,7 +430,7 @@ struct SendView: View {
         working = true
         defer { working = false }
         do {
-            if mode == .gift, let sats = parsedAmount {
+            if isGift, let sats = parsedAmount {
                 let (voucher, send) = try await store.prepareGift(
                     amountSats: sats,
                     feeRateSatPerVb: feeChoice.satPerVb(store.feeTiers)
@@ -501,17 +455,13 @@ struct SendView: View {
 
     private func reviewGiftSheet(_ voucher: ClaimVoucher, _ send: SignedSend) -> some View {
         VStack(spacing: 20) {
-            VStack(spacing: 0) {
-                receiptRow("Gift amount", "\(Format.sats(send.details.amountSats)) sats")
-                Divider().padding(.horizontal, 16)
-                receiptRow("Network fee", "\(Format.sats(send.details.feeSats)) sats")
-                Divider().padding(.horizontal, 16)
-                receiptRow("Total", "\(Format.sats(send.details.totalSats)) sats", emphasized: true)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-            )
+            IconBubble(systemName: "gift.fill", tint: .purple, size: 56)
+
+            DetailCard(rows: [
+                DetailRow(title: "Gift amount", value: "\(Format.sats(send.details.amountSats)) sats"),
+                DetailRow(title: "Network fee", value: "\(Format.sats(send.details.feeSats)) sats"),
+                DetailRow(title: "Total", value: "\(Format.sats(send.details.totalSats)) sats", emphasized: true),
+            ])
 
             Text("The recipient pays a small claim fee out of the gift. Unclaimed gifts can be taken back — this one expires \(voucher.expiresAt.formatted(date: .abbreviated, time: .omitted)).")
                 .font(.caption)
@@ -587,19 +537,14 @@ struct SendView: View {
 
     private func reviewSheet(_ send: SignedSend) -> some View {
         VStack(spacing: 20) {
-            VStack(spacing: 0) {
-                receiptRow("To", Format.shortAddress(send.details.destinationAddress, prefix: 14, suffix: 10), monospaced: true)
-                Divider().padding(.horizontal, 16)
-                receiptRow("Amount", "\(Format.sats(send.details.amountSats)) sats")
-                Divider().padding(.horizontal, 16)
-                receiptRow("Network fee", "\(Format.sats(send.details.feeSats)) sats")
-                Divider().padding(.horizontal, 16)
-                receiptRow("Total", "\(Format.sats(send.details.totalSats)) sats", emphasized: true)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-            )
+            IconBubble(systemName: "paperplane.fill", size: 56)
+
+            DetailCard(rows: [
+                DetailRow(title: "To", value: Format.shortAddress(send.details.destinationAddress, prefix: 14, suffix: 10), monospaced: true),
+                DetailRow(title: "Amount", value: "\(Format.sats(send.details.amountSats)) sats"),
+                DetailRow(title: "Network fee", value: "\(Format.sats(send.details.feeSats)) sats"),
+                DetailRow(title: "Total", value: "\(Format.sats(send.details.totalSats)) sats", emphasized: true),
+            ])
 
             Text("Signed and ready. Nothing is sent until you confirm.")
                 .font(.caption)
@@ -621,23 +566,6 @@ struct SendView: View {
             Spacer(minLength: 0)
         }
         .padding(20)
-    }
-
-    private func receiptRow(_ title: String, _ value: String, monospaced: Bool = false, emphasized: Bool = false) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .font(
-                    monospaced
-                        ? .system(.footnote, design: .monospaced).weight(.medium)
-                        : .system(.subheadline, design: .rounded).weight(emphasized ? .bold : .semibold)
-                )
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
     }
 
     private func broadcast(_ send: SignedSend) async {

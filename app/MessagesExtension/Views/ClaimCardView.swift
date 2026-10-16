@@ -100,31 +100,13 @@ struct ClaimCardView: View {
     }
 
     private var detailsCard: some View {
-        VStack(spacing: 0) {
-            row("Amount", "\(Format.sats(voucher.amountSats)) sats")
-            Divider().padding(.horizontal, 16)
-            row(
-                voucher.isExpired ? "Expired" : "Expires",
-                voucher.expiresAt.formatted(date: .abbreviated, time: .omitted)
-            )
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
-    }
-
-    private func row(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        DetailCard(rows: [
+            DetailRow(title: "Amount", value: "\(Format.sats(voucher.amountSats)) sats"),
+            DetailRow(
+                title: voucher.isExpired ? "Expired" : "Expires",
+                value: voucher.expiresAt.formatted(date: .abbreviated, time: .omitted)
+            ),
+        ])
     }
 
     @ViewBuilder
