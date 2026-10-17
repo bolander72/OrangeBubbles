@@ -66,7 +66,7 @@ final class WalletStore: ObservableObject {
 
     init(chain: ChainConfig = .fromBundle()) {
         self.defaultChain = chain
-        let custom = Self.storedCustomEsploraURL
+        let custom = Self.storedCustomEsploraURL(for: chain.network)
         self.customEsploraURL = custom
         self.chain = custom.map { chain.withCustomEsplora($0) } ?? chain
         self.backupStore = ICloudBackupStore(network: chain.network)
@@ -75,9 +75,14 @@ final class WalletStore: ObservableObject {
 
     // MARK: - Data source (own node)
 
-    private static let customEsploraKey = "customEsploraURL.v1"
-    private static var storedCustomEsploraURL: URL? {
-        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.string(forKey: customEsploraKey).flatMap(URL.init(string:))
+    /// Keyed by network: a node verified for signet in a Debug build must
+    /// never be handed to a mainnet build (BDK aborts on a chain mismatch).
+    private static func customEsploraKey(for network: NetworkKind) -> String {
+        "customEsploraURL.v1.\(network.rawValue)"
+    }
+    private static func storedCustomEsploraURL(for network: NetworkKind) -> URL? {
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?
+            .string(forKey: customEsploraKey(for: network)).flatMap(URL.init(string:))
     }
 
     /// Switches chain reads to the user's own Esplora/mempool API after
@@ -88,17 +93,38 @@ final class WalletStore: ObservableObject {
     func useCustomEsplora(_ raw: String) async throws {
         guard let url = EsploraEndpointCheck.normalize(raw) else { throw EsploraEndpointCheck.Failure.notAnURL }
         _ = try await EsploraEndpointCheck.verify(url, network: chain.network)
-        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.set(url.absoluteString, forKey: Self.customEsploraKey)
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.set(url.absoluteString, forKey: Self.customEsploraKey(for: chain.network))
         customEsploraURL = url
         chain = defaultChain.withCustomEsplora(url)
         await switchChainBackend()
     }
 
     func useDefaultEsplora() async {
-        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.removeObject(forKey: Self.customEsploraKey)
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.removeObject(forKey: Self.customEsploraKey(for: chain.network))
         customEsploraURL = nil
         chain = defaultChain
         await switchChainBackend()
+    }
+
+    /// A stored custom node is re-checked against this build's chain before
+    /// the first sync. Wrong chain (or no longer Esplora-shaped) → drop it
+    /// and fall back to the public services; merely unreachable → keep it,
+    /// failover covers that. Belt and braces on top of the per-network key.
+    private func revalidateCustomEsploraIfNeeded() async {
+        guard let url = customEsploraURL else { return }
+        do {
+            _ = try await EsploraEndpointCheck.verify(url, network: chain.network)
+        } catch let failure as EsploraEndpointCheck.Failure {
+            switch failure {
+            case .wrongChain, .notEsplora:
+                NSLog("wallet: dropping custom esplora %@ — %@", url.absoluteString, failure.localizedDescription)
+                UserDefaults(suiteName: SharedSnapshot.appGroupID)?.removeObject(forKey: Self.customEsploraKey(for: chain.network))
+                customEsploraURL = nil
+                chain = defaultChain
+            case .unreachable, .notAnURL:
+                break
+            }
+        } catch {}
     }
 
     private func switchChainBackend() async {
@@ -283,6 +309,7 @@ final class WalletStore: ObservableObject {
             return
         }
         do {
+            await revalidateCustomEsploraIfNeeded()
             // A phone that ran a test-network build before this one has that
             // wallet in the pre-slot (mainnet-named) storage. Move it to its
             // own slot so this build starts a wallet for *its* chain.
@@ -316,7 +343,7 @@ final class WalletStore: ObservableObject {
             // seconds on a real device while iOS provisions the container —
             // on main it freezes the extension into a blank panel.
             let store = backupStore
-            _ = try await Self.offMain { store.relocateLegacyEnvelopeIfForeign() }
+            _ = try await Self.offMain { try store.relocateLegacyEnvelopeIfForeign() }
             let hasBackup = try await Self.offMain { store.backupExists() }
             // A backup file for another chain reads as "no backup here".
             let envelope: BackupEnvelope? = hasBackup

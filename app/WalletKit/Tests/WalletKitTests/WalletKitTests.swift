@@ -298,6 +298,33 @@ final class BackupStoreTests: XCTestCase {
         mainnet.eraseAll(); signet.eraseAll()
     }
 
+    /// Migration is not mainnet-only: a *signet* build must also find the
+    /// beta's wallet in the legacy slot, and an occupied destination must
+    /// preserve both copies rather than delete one.
+    func testAnyNetworkRelocatesLegacyAndNeverDeletes() async throws {
+        let signet = ICloudBackupStore(network: .signet)
+        let mainnet = ICloudBackupStore(network: .bitcoin)
+        mainnet.eraseAll(); signet.eraseAll()
+
+        // Legacy layout, and the signet store itself does the relocating.
+        try mainnet.save(try envelope(network: .signet))
+        XCTAssertEqual(try signet.relocateLegacyEnvelopeIfForeign(), .signet)
+        XCTAssertTrue(signet.backupExists())
+        XCTAssertFalse(mainnet.backupExists())
+
+        // A second legacy signet envelope appears while the slot is taken:
+        // it must be kept as an orphan, not deleted.
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("WalletBackupLocal")
+        try mainnet.save(try envelope(network: .signet))
+        XCTAssertEqual(try signet.relocateLegacyEnvelopeIfForeign(), .signet)
+        let orphans = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.contains(".orphan-") }
+        XCTAssertEqual(orphans.count, 1, "the displaced copy survives as an orphan")
+        XCTAssertFalse(mainnet.backupExists())
+        for o in orphans { try? FileManager.default.removeItem(at: dir.appendingPathComponent(o)) }
+        mainnet.eraseAll(); signet.eraseAll()
+    }
+
     /// A pre-slot install wrote the signet beta's envelope under the mainnet
     /// file name. The mainnet store must move it aside and report no backup,
     /// and the signet store must then find it.
@@ -310,7 +337,7 @@ final class BackupStoreTests: XCTestCase {
         try mainnet.save(try envelope(network: .signet))
         XCTAssertTrue(mainnet.backupExists())
 
-        XCTAssertEqual(mainnet.relocateLegacyEnvelopeIfForeign(), .signet)
+        XCTAssertEqual(try mainnet.relocateLegacyEnvelopeIfForeign(), .signet)
         XCTAssertFalse(mainnet.backupExists())
         XCTAssertTrue(signet.backupExists())
         let relocated = try await signet.load()
