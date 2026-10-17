@@ -220,7 +220,7 @@ final class BackupVersioningTests: XCTestCase {
     /// generation instead of losing the wallet. (Test env has no iCloud,
     /// so this exercises the local-fallback path end to end.)
     func testCorruptMainFallsBackToPreviousEnvelope() async throws {
-        let store = ICloudBackupStore()
+        let store = ICloudBackupStore(network: .signet)
         let key = Data(repeating: 5, count: 32)
 
         let older = try BackupCrypto.seal(makeSecrets(hint: 1), inputKeyMaterial: key, keyProvider: "t")
@@ -236,7 +236,7 @@ final class BackupVersioningTests: XCTestCase {
         let mainURL = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("WalletBackupLocal")
-            .appendingPathComponent(ICloudBackupStore.fileName)
+            .appendingPathComponent(ICloudBackupStore.fileName(for: .signet))
         try Data("not json".utf8).write(to: mainURL)
 
         let recovered = try await store.load()
@@ -249,7 +249,7 @@ final class BackupStoreTests: XCTestCase {
     /// In the test environment there is no ubiquity container, so this
     /// exercises the local-fallback path end to end.
     func testFallbackSaveLoadRoundTrip() async throws {
-        let store = ICloudBackupStore()
+        let store = ICloudBackupStore(network: .signet)
         XCTAssertFalse(store.isUsingICloud)
 
         let secrets = WalletSecrets(
@@ -268,6 +268,61 @@ final class BackupStoreTests: XCTestCase {
 
         let loaded = try await store.load()
         XCTAssertEqual(loaded, envelope)
+    }
+
+    private func envelope(network: NetworkKind) throws -> BackupEnvelope {
+        try BackupCrypto.seal(
+            WalletSecrets(mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+                          network: network, scriptType: .bip84),
+            inputKeyMaterial: Data(repeating: 7, count: 32), keyProvider: "test"
+        )
+    }
+
+    /// The crash behind the first mainnet TestFlight: a signet wallet left by
+    /// the beta, handed to a mainnet build. Each network must only ever see
+    /// its own envelope.
+    func testNetworksNeverShareABackup() async throws {
+        let signet = ICloudBackupStore(network: .signet)
+        let mainnet = ICloudBackupStore(network: .bitcoin)
+        mainnet.eraseAll(); signet.eraseAll()
+
+        try signet.save(try envelope(network: .signet))
+        XCTAssertTrue(signet.backupExists())
+        XCTAssertFalse(mainnet.backupExists(), "a signet backup is invisible to the mainnet store")
+
+        try mainnet.save(try envelope(network: .bitcoin))
+        let loadedMainnet = try await mainnet.load()
+        let loadedSignet = try await signet.load()
+        XCTAssertEqual(loadedMainnet.network, .bitcoin)
+        XCTAssertEqual(loadedSignet.network, .signet)
+        mainnet.eraseAll(); signet.eraseAll()
+    }
+
+    /// A pre-slot install wrote the signet beta's envelope under the mainnet
+    /// file name. The mainnet store must move it aside and report no backup,
+    /// and the signet store must then find it.
+    func testLegacySignetEnvelopeIsRelocatedNotBooted() async throws {
+        let signet = ICloudBackupStore(network: .signet)
+        let mainnet = ICloudBackupStore(network: .bitcoin)
+        mainnet.eraseAll(); signet.eraseAll()
+
+        // Simulate the legacy layout: a signet envelope in the mainnet slot.
+        try mainnet.save(try envelope(network: .signet))
+        XCTAssertTrue(mainnet.backupExists())
+
+        XCTAssertEqual(mainnet.relocateLegacyEnvelopeIfForeign(), .signet)
+        XCTAssertFalse(mainnet.backupExists())
+        XCTAssertTrue(signet.backupExists())
+        let relocated = try await signet.load()
+        XCTAssertEqual(relocated.network, .signet)
+
+        // Even without relocation, load() refuses a foreign envelope.
+        try mainnet.save(try envelope(network: .signet))
+        do {
+            _ = try await mainnet.load()
+            XCTFail("must not return a signet envelope from the mainnet store")
+        } catch WalletKitError.backupNotFound {}
+        mainnet.eraseAll(); signet.eraseAll()
     }
 }
 

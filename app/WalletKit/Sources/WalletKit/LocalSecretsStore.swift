@@ -15,15 +15,39 @@ import Security
 /// Security posture (ADR 0004): possession of the unlocked device grants
 /// balance visibility and receiving — spending and seed reveal stay behind
 /// Face ID at the app layer.
+///
+/// One slot per network: a wallet created by a signet (test) build must
+/// never be handed to a mainnet build — BDK aborts the process when a
+/// wallet's chain and the Esplora it syncs against disagree ("remote
+/// esplora should have same genesis block"), which is exactly what the
+/// first mainnet TestFlight did on a phone that had run the signet beta.
+/// Mainnet keeps the original account name; other networks are suffixed.
 public struct LocalSecretsStore: Sendable {
     private let service: String
-    private let account = "wallet-secrets"
+    private let network: NetworkKind
 
-    public init(service: String = "com.bolandcompany.orangebubbles.local-secrets") {
+    public init(network: NetworkKind, service: String = "com.bolandcompany.orangebubbles.local-secrets") {
         self.service = service
+        self.network = network
     }
 
+    private static let legacyAccount = "wallet-secrets"
+
+    private func account(for network: NetworkKind) -> String {
+        network == .bitcoin ? Self.legacyAccount : "\(Self.legacyAccount).\(network.rawValue)"
+    }
+
+    private var account: String { account(for: network) }
+
+    /// This network's cached wallet, or nil. A wallet found in the slot
+    /// whose network field disagrees is never returned (see
+    /// `relocateLegacyItemIfForeign` for the pre-slot migration).
     public func load() -> WalletSecrets? {
+        guard let secrets = read(account: account), secrets.network == network else { return nil }
+        return secrets
+    }
+
+    private func read(account: String) -> WalletSecrets? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -38,6 +62,20 @@ public struct LocalSecretsStore: Sendable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try? decoder.decode(WalletSecrets.self, from: data)
+    }
+
+    /// Moves a pre-slot wallet that belongs to another network out of the
+    /// mainnet slot. Call once at startup from the mainnet store; returns
+    /// the network it relocated, if any.
+    @discardableResult
+    public func relocateLegacyItemIfForeign() -> NetworkKind? {
+        guard network == .bitcoin, let legacy = read(account: Self.legacyAccount), legacy.network != .bitcoin else {
+            return nil
+        }
+        let moved = LocalSecretsStore(network: legacy.network, service: service)
+        if moved.read(account: moved.account) == nil { moved.save(legacy) }
+        clear()
+        return legacy.network
     }
 
     public func save(_ secrets: WalletSecrets) {

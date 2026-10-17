@@ -55,6 +55,23 @@ public struct ChainConfig: Sendable {
         explorerTxBase.appendingPathComponent(txid)
     }
 
+    /// Network is a build setting (`WALLET_NETWORK` → Info.plist
+    /// `WalletNetwork`, present in both the extension and the host app):
+    /// Debug builds default to signet so the team can test with free
+    /// faucet coins; Release is mainnet.
+    public static func fromBundle(_ bundle: Bundle = .main) -> ChainConfig {
+        switch bundle.object(forInfoDictionaryKey: "WalletNetwork") as? String {
+        case "signet": return .signet
+        case "bitcoin": return .mainnet
+        default:
+            #if DEBUG
+                return .signet
+            #else
+                return .mainnet
+            #endif
+        }
+    }
+
     /// The same chain, read through the user's own Esplora/mempool API
     /// first (the public services stay as failover). No separate fees
     /// endpoint: fee estimates come from the node too, so a privacy-minded
