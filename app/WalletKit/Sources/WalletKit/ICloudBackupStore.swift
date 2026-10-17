@@ -66,33 +66,48 @@ public struct ICloudBackupStore: Sendable {
         url.deletingLastPathComponent().appendingPathComponent(Self.legacyFileName)
     }
 
-    /// If a legacy mainnet-named envelope holds another network's wallet,
-    /// move it (and its previous copy) to that network's names. Returns
-    /// the relocated network, if any. Only the mainnet store does this;
-    /// it runs before `backupExists`/`load` look at the mainnet slot.
+    /// If a legacy mainnet-named envelope (from before slots existed) holds
+    /// a non-mainnet network's wallet, move it and its previous copy to
+    /// that network's names. Any store may call this at startup, before
+    /// `backupExists`/`load`: a new signet build needs to find the beta's
+    /// wallet just as a mainnet build needs it out of the way.
+    ///
+    /// Nothing is ever deleted: when the destination already exists, the
+    /// legacy file is moved to a timestamped `.orphan-…` sibling instead.
+    /// Errors propagate — a foreign envelope that could not be moved must
+    /// not be left where a later mainnet `save()` would overwrite it, so
+    /// the caller fails setup rather than proceeding. Returns the network
+    /// relocated, if any.
     @discardableResult
-    public func relocateLegacyEnvelopeIfForeign() -> NetworkKind? {
-        guard network == .bitcoin else { return nil }
+    public func relocateLegacyEnvelopeIfForeign() throws -> NetworkKind? {
         var relocated: NetworkKind?
         for dir in [icloudURL()?.deletingLastPathComponent(), fallbackURL().deletingLastPathComponent()].compactMap({ $0 }) {
             let legacy = dir.appendingPathComponent(Self.legacyFileName)
             guard fileManager.fileExists(atPath: legacy.path),
                   let envelope = try? decode(at: legacy), envelope.network != .bitcoin else { continue }
-            let target = dir.appendingPathComponent(Self.fileName(for: envelope.network))
-            if !fileManager.fileExists(atPath: target.path) {
-                try? fileManager.moveItem(at: legacy, to: target)
-            } else {
-                try? fileManager.removeItem(at: legacy)
-            }
+            let stamp = Int(Date().timeIntervalSince1970)
+            try moveKeepingBoth(
+                legacy,
+                to: dir.appendingPathComponent(Self.fileName(for: envelope.network)),
+                orphan: dir.appendingPathComponent("wallet-backup.v1.\(envelope.network.rawValue).orphan-\(stamp).json")
+            )
             let legacyPrev = dir.appendingPathComponent(Self.legacyPreviousFileName)
-            let targetPrev = dir.appendingPathComponent(Self.previousFileName(for: envelope.network))
             if fileManager.fileExists(atPath: legacyPrev.path) {
-                if !fileManager.fileExists(atPath: targetPrev.path) { try? fileManager.moveItem(at: legacyPrev, to: targetPrev) }
-                else { try? fileManager.removeItem(at: legacyPrev) }
+                try moveKeepingBoth(
+                    legacyPrev,
+                    to: dir.appendingPathComponent(Self.previousFileName(for: envelope.network)),
+                    orphan: dir.appendingPathComponent("wallet-backup.v1.\(envelope.network.rawValue).previous.orphan-\(stamp).json")
+                )
             }
             relocated = envelope.network
         }
         return relocated
+    }
+
+    /// Moves `source` to `target`, or to `orphan` when `target` exists.
+    private func moveKeepingBoth(_ source: URL, to target: URL, orphan: URL) throws {
+        let destination = fileManager.fileExists(atPath: target.path) ? orphan : target
+        try fileManager.moveItem(at: source, to: destination)
     }
 
     // MARK: - API

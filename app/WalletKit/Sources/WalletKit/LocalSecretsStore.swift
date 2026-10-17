@@ -64,24 +64,50 @@ public struct LocalSecretsStore: Sendable {
         return try? decoder.decode(WalletSecrets.self, from: data)
     }
 
-    /// Moves a pre-slot wallet that belongs to another network out of the
-    /// mainnet slot. Call once at startup from the mainnet store; returns
-    /// the network it relocated, if any.
+    /// Moves a pre-slot wallet (stored under the mainnet-named account
+    /// before slots existed) that belongs to a non-mainnet network into
+    /// that network's slot. Any store may call this at startup — a new
+    /// signet build must find the signet beta's wallet just as a mainnet
+    /// build must get it out of the way.
+    ///
+    /// Transactional: the legacy item is removed only after the target
+    /// slot has been re-read and holds exactly the migrated payload. If
+    /// the target slot already holds a *different* wallet, the legacy one
+    /// is preserved under an orphan account rather than discarded — seed
+    /// material is never the thing that loses a race. Returns the network
+    /// relocated, if any.
     @discardableResult
     public func relocateLegacyItemIfForeign() -> NetworkKind? {
-        guard network == .bitcoin, let legacy = read(account: Self.legacyAccount), legacy.network != .bitcoin else {
-            return nil
+        guard let legacy = read(account: Self.legacyAccount), legacy.network != .bitcoin else { return nil }
+        let targetAccount = account(for: legacy.network)
+        let destination: String
+        if let existing = read(account: targetAccount), existing != legacy {
+            destination = "\(targetAccount).orphan-\(Int(Date().timeIntervalSince1970))"
+        } else {
+            destination = targetAccount
         }
-        let moved = LocalSecretsStore(network: legacy.network, service: service)
-        if moved.read(account: moved.account) == nil { moved.save(legacy) }
-        clear()
+        guard write(legacy, account: destination), read(account: destination) == legacy else {
+            return nil // leave the legacy item exactly where it was
+        }
+        delete(account: Self.legacyAccount)
         return legacy.network
     }
 
-    public func save(_ secrets: WalletSecrets) {
+    /// Writes this network's cached wallet. Returns false when the
+    /// keychain refused the write (callers that must know, such as the
+    /// migration, check it; the auto-wallet path logs and carries on,
+    /// since the iCloud envelope remains the durable copy).
+    @discardableResult
+    public func save(_ secrets: WalletSecrets) -> Bool {
+        let ok = write(secrets, account: account)
+        if !ok { NSLog("LocalSecretsStore: keychain write failed for %@", account) }
+        return ok
+    }
+
+    private func write(_ secrets: WalletSecrets, account: String) -> Bool {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(secrets) else { return }
+        guard let data = try? encoder.encode(secrets) else { return false }
 
         let base: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
@@ -95,10 +121,12 @@ public struct LocalSecretsStore: Sendable {
         attributes[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         attributes[kSecAttrSynchronizable] = false
         attributes[kSecAttrLabel] = "OrangeBubbles wallet (this device)"
-        SecItemAdd(attributes as CFDictionary, nil)
+        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 
-    public func clear() {
+    public func clear() { delete(account: account) }
+
+    private func delete(account: String) {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
