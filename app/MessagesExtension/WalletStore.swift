@@ -48,8 +48,8 @@ final class WalletStore: ObservableObject {
     /// so resealing the backup never re-prompts Face ID/passkey.
     private var sessionKey: (material: Data, provider: String)?
     private let keychainProvider = SyncedKeychainKeyProvider()
-    private let backupStore = ICloudBackupStore()
-    private let localSecrets = LocalSecretsStore()
+    private let backupStore: ICloudBackupStore
+    private let localSecrets: LocalSecretsStore
     private let faceID = FaceIDGate()
     private let feeEstimator = FeeEstimator()
     private let priceOracle = PriceOracle()
@@ -66,16 +66,23 @@ final class WalletStore: ObservableObject {
 
     init(chain: ChainConfig = .fromBundle()) {
         self.defaultChain = chain
-        let custom = Self.storedCustomEsploraURL
+        let custom = Self.storedCustomEsploraURL(for: chain.network)
         self.customEsploraURL = custom
         self.chain = custom.map { chain.withCustomEsplora($0) } ?? chain
+        self.backupStore = ICloudBackupStore(network: chain.network)
+        self.localSecrets = LocalSecretsStore(network: chain.network)
     }
 
     // MARK: - Data source (own node)
 
-    private static let customEsploraKey = "customEsploraURL.v1"
-    private static var storedCustomEsploraURL: URL? {
-        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.string(forKey: customEsploraKey).flatMap(URL.init(string:))
+    /// Keyed by network: a node verified for signet in a Debug build must
+    /// never be handed to a mainnet build (BDK aborts on a chain mismatch).
+    private static func customEsploraKey(for network: NetworkKind) -> String {
+        "customEsploraURL.v1.\(network.rawValue)"
+    }
+    private static func storedCustomEsploraURL(for network: NetworkKind) -> URL? {
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?
+            .string(forKey: customEsploraKey(for: network)).flatMap(URL.init(string:))
     }
 
     /// Switches chain reads to the user's own Esplora/mempool API after
@@ -86,17 +93,38 @@ final class WalletStore: ObservableObject {
     func useCustomEsplora(_ raw: String) async throws {
         guard let url = EsploraEndpointCheck.normalize(raw) else { throw EsploraEndpointCheck.Failure.notAnURL }
         _ = try await EsploraEndpointCheck.verify(url, network: chain.network)
-        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.set(url.absoluteString, forKey: Self.customEsploraKey)
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.set(url.absoluteString, forKey: Self.customEsploraKey(for: chain.network))
         customEsploraURL = url
         chain = defaultChain.withCustomEsplora(url)
         await switchChainBackend()
     }
 
     func useDefaultEsplora() async {
-        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.removeObject(forKey: Self.customEsploraKey)
+        UserDefaults(suiteName: SharedSnapshot.appGroupID)?.removeObject(forKey: Self.customEsploraKey(for: chain.network))
         customEsploraURL = nil
         chain = defaultChain
         await switchChainBackend()
+    }
+
+    /// A stored custom node is re-checked against this build's chain before
+    /// the first sync. Wrong chain (or no longer Esplora-shaped) → drop it
+    /// and fall back to the public services; merely unreachable → keep it,
+    /// failover covers that. Belt and braces on top of the per-network key.
+    private func revalidateCustomEsploraIfNeeded() async {
+        guard let url = customEsploraURL else { return }
+        do {
+            _ = try await EsploraEndpointCheck.verify(url, network: chain.network)
+        } catch let failure as EsploraEndpointCheck.Failure {
+            switch failure {
+            case .wrongChain, .notEsplora:
+                NSLog("wallet: dropping custom esplora %@ — %@", url.absoluteString, failure.localizedDescription)
+                UserDefaults(suiteName: SharedSnapshot.appGroupID)?.removeObject(forKey: Self.customEsploraKey(for: chain.network))
+                customEsploraURL = nil
+                chain = defaultChain
+            case .unreachable, .notAnURL:
+                break
+            }
+        } catch {}
     }
 
     private func switchChainBackend() async {
@@ -281,6 +309,13 @@ final class WalletStore: ObservableObject {
             return
         }
         do {
+            await revalidateCustomEsploraIfNeeded()
+            // A phone that ran a test-network build before this one has that
+            // wallet in the pre-slot (mainnet-named) storage. Move it to its
+            // own slot so this build starts a wallet for *its* chain.
+            if let moved = localSecrets.relocateLegacyItemIfForeign() {
+                NSLog("wallet: moved a %@ wallet out of the mainnet slot", moved.rawValue)
+            }
             if let cached = localSecrets.load() {
                 // Fast path: this device already holds the wallet.
                 try await bootEngine(with: cached)
@@ -308,12 +343,16 @@ final class WalletStore: ObservableObject {
             // seconds on a real device while iOS provisions the container —
             // on main it freezes the extension into a blank panel.
             let store = backupStore
+            _ = try await Self.offMain { try store.relocateLegacyEnvelopeIfForeign() }
             let hasBackup = try await Self.offMain { store.backupExists() }
-            if hasBackup {
-                phase = .working("Restoring your wallet…")
-                let envelope = try await Task.detached(priority: .userInitiated) {
-                    try await store.load()
+            // A backup file for another chain reads as "no backup here".
+            let envelope: BackupEnvelope? = hasBackup
+                ? try await Task.detached(priority: .userInitiated) {
+                    do { return try await store.load() } catch WalletKitError.backupNotFound { return nil }
                 }.value
+                : nil
+            if let envelope {
+                phase = .working("Restoring your wallet…")
                 let material = try await keyMaterial(for: envelope)
                 sessionKey = (material, envelope.keyProvider)
                 knownBackupProvider = envelope.keyProvider
@@ -345,6 +384,13 @@ final class WalletStore: ObservableObject {
     }
 
     private func bootEngine(with secrets: WalletSecrets) async throws {
+        // Never let BDK see a wallet on one chain and an Esplora on another:
+        // it aborts the whole process rather than returning an error.
+        guard secrets.network == chain.network else {
+            throw WalletKitError.internalError(
+                "This wallet is on \(secrets.network.rawValue) but this build uses \(chain.network.rawValue)."
+            )
+        }
         let storageDir = Self.walletStorageDirectory()
         let cacheKey = cacheDiscriminator(generation: chainCacheGeneration)
         let engine = try await Self.offMain {
@@ -1050,23 +1096,5 @@ private final class ResumeOnce<T>: @unchecked Sendable {
         continuation = nil
         lock.unlock()
         pending?.resume(with: result)
-    }
-}
-
-extension ChainConfig {
-    /// Network is a build setting (`WALLET_NETWORK` → Info.plist `WalletNetwork`):
-    /// Debug builds default to standard signet so the team can test with
-    /// free faucet coins; Release is mainnet.
-    static func fromBundle(_ bundle: Bundle = .main) -> ChainConfig {
-        switch bundle.object(forInfoDictionaryKey: "WalletNetwork") as? String {
-        case "signet": return .signet
-        case "bitcoin": return .mainnet
-        default:
-            #if DEBUG
-                return .signet
-            #else
-                return .mainnet
-            #endif
-        }
     }
 }
