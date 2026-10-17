@@ -23,8 +23,8 @@ final class PasskeyOps: ObservableObject {
 
     @Published private(set) var state: WalletState = .checking
 
-    private let localSecrets = LocalSecretsStore()
-    private let backupStore = ICloudBackupStore()
+    private let localSecrets = LocalSecretsStore(network: ChainConfig.fromBundle().network)
+    private let backupStore = ICloudBackupStore(network: ChainConfig.fromBundle().network)
     var anchor: @MainActor () -> ASPresentationAnchor? = { nil }
 
     /// Shared with the extension via the App Group.

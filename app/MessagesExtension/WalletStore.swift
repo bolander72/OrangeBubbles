@@ -48,8 +48,8 @@ final class WalletStore: ObservableObject {
     /// so resealing the backup never re-prompts Face ID/passkey.
     private var sessionKey: (material: Data, provider: String)?
     private let keychainProvider = SyncedKeychainKeyProvider()
-    private let backupStore = ICloudBackupStore()
-    private let localSecrets = LocalSecretsStore()
+    private let backupStore: ICloudBackupStore
+    private let localSecrets: LocalSecretsStore
     private let faceID = FaceIDGate()
     private let feeEstimator = FeeEstimator()
     private let priceOracle = PriceOracle()
@@ -69,6 +69,8 @@ final class WalletStore: ObservableObject {
         let custom = Self.storedCustomEsploraURL
         self.customEsploraURL = custom
         self.chain = custom.map { chain.withCustomEsplora($0) } ?? chain
+        self.backupStore = ICloudBackupStore(network: chain.network)
+        self.localSecrets = LocalSecretsStore(network: chain.network)
     }
 
     // MARK: - Data source (own node)
@@ -281,6 +283,12 @@ final class WalletStore: ObservableObject {
             return
         }
         do {
+            // A phone that ran a test-network build before this one has that
+            // wallet in the pre-slot (mainnet-named) storage. Move it to its
+            // own slot so this build starts a wallet for *its* chain.
+            if let moved = localSecrets.relocateLegacyItemIfForeign() {
+                NSLog("wallet: moved a %@ wallet out of the mainnet slot", moved.rawValue)
+            }
             if let cached = localSecrets.load() {
                 // Fast path: this device already holds the wallet.
                 try await bootEngine(with: cached)
@@ -308,12 +316,16 @@ final class WalletStore: ObservableObject {
             // seconds on a real device while iOS provisions the container —
             // on main it freezes the extension into a blank panel.
             let store = backupStore
+            _ = try await Self.offMain { store.relocateLegacyEnvelopeIfForeign() }
             let hasBackup = try await Self.offMain { store.backupExists() }
-            if hasBackup {
-                phase = .working("Restoring your wallet…")
-                let envelope = try await Task.detached(priority: .userInitiated) {
-                    try await store.load()
+            // A backup file for another chain reads as "no backup here".
+            let envelope: BackupEnvelope? = hasBackup
+                ? try await Task.detached(priority: .userInitiated) {
+                    do { return try await store.load() } catch WalletKitError.backupNotFound { return nil }
                 }.value
+                : nil
+            if let envelope {
+                phase = .working("Restoring your wallet…")
                 let material = try await keyMaterial(for: envelope)
                 sessionKey = (material, envelope.keyProvider)
                 knownBackupProvider = envelope.keyProvider
@@ -345,6 +357,13 @@ final class WalletStore: ObservableObject {
     }
 
     private func bootEngine(with secrets: WalletSecrets) async throws {
+        // Never let BDK see a wallet on one chain and an Esplora on another:
+        // it aborts the whole process rather than returning an error.
+        guard secrets.network == chain.network else {
+            throw WalletKitError.internalError(
+                "This wallet is on \(secrets.network.rawValue) but this build uses \(chain.network.rawValue)."
+            )
+        }
         let storageDir = Self.walletStorageDirectory()
         let cacheKey = cacheDiscriminator(generation: chainCacheGeneration)
         let engine = try await Self.offMain {
@@ -1050,23 +1069,5 @@ private final class ResumeOnce<T>: @unchecked Sendable {
         continuation = nil
         lock.unlock()
         pending?.resume(with: result)
-    }
-}
-
-extension ChainConfig {
-    /// Network is a build setting (`WALLET_NETWORK` → Info.plist `WalletNetwork`):
-    /// Debug builds default to standard signet so the team can test with
-    /// free faucet coins; Release is mainnet.
-    static func fromBundle(_ bundle: Bundle = .main) -> ChainConfig {
-        switch bundle.object(forInfoDictionaryKey: "WalletNetwork") as? String {
-        case "signet": return .signet
-        case "bitcoin": return .mainnet
-        default:
-            #if DEBUG
-                return .signet
-            #else
-                return .mainnet
-            #endif
-        }
     }
 }

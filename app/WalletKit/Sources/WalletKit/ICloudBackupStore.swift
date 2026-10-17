@@ -7,20 +7,37 @@ import Foundation
 /// unavailable (simulator without sign-in, iCloud Drive off) it falls back
 /// to app-local storage so create/restore keep working — and migrates the
 /// file into iCloud automatically the next time it becomes reachable.
+///
+/// One envelope per network (see `LocalSecretsStore` for why). Mainnet
+/// keeps the original `wallet-backup.v1.json`; other networks get
+/// `wallet-backup.v1.<network>.json`. A legacy mainnet-named file that
+/// turns out to hold another network's wallet is moved to that network's
+/// name on first contact, never deleted.
 public struct ICloudBackupStore: Sendable {
-    public static let fileName = "wallet-backup.v1.json"
-    /// The prior envelope, kept on every rewrite so one bad seal (or an
-    /// interrupted write on a future OS) can never orphan the wallet.
-    public static let previousFileName = "wallet-backup.v1.previous.json"
+    public static let legacyFileName = "wallet-backup.v1.json"
+    public static let legacyPreviousFileName = "wallet-backup.v1.previous.json"
 
     private let containerIdentifier: String?
+    private let network: NetworkKind
     private var fileManager: FileManager { FileManager.default }
 
     /// - Parameter containerIdentifier: pass nil for the app's first
     ///   ubiquity container from entitlements.
-    public init(containerIdentifier: String? = nil) {
+    public init(network: NetworkKind, containerIdentifier: String? = nil) {
         self.containerIdentifier = containerIdentifier
+        self.network = network
     }
+
+    public static func fileName(for network: NetworkKind) -> String {
+        network == .bitcoin ? legacyFileName : "wallet-backup.v1.\(network.rawValue).json"
+    }
+
+    public static func previousFileName(for network: NetworkKind) -> String {
+        network == .bitcoin ? legacyPreviousFileName : "wallet-backup.v1.\(network.rawValue).previous.json"
+    }
+
+    private var fileName: String { Self.fileName(for: network) }
+    private var previousFileName: String { Self.previousFileName(for: network) }
 
     // MARK: - Locations
 
@@ -34,14 +51,48 @@ public struct ICloudBackupStore: Sendable {
         }
         let documents = container.appendingPathComponent("Documents", isDirectory: true)
         try? fileManager.createDirectory(at: documents, withIntermediateDirectories: true)
-        return documents.appendingPathComponent(Self.fileName)
+        return documents.appendingPathComponent(fileName)
     }
 
     private func fallbackURL() -> URL {
         let directory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("WalletBackupLocal", isDirectory: true)
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent(Self.fileName)
+        return directory.appendingPathComponent(fileName)
+    }
+
+    /// Where a legacy (pre-slot) envelope would sit next to `url`.
+    private func legacyURL(besides url: URL) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent(Self.legacyFileName)
+    }
+
+    /// If a legacy mainnet-named envelope holds another network's wallet,
+    /// move it (and its previous copy) to that network's names. Returns
+    /// the relocated network, if any. Only the mainnet store does this;
+    /// it runs before `backupExists`/`load` look at the mainnet slot.
+    @discardableResult
+    public func relocateLegacyEnvelopeIfForeign() -> NetworkKind? {
+        guard network == .bitcoin else { return nil }
+        var relocated: NetworkKind?
+        for dir in [icloudURL()?.deletingLastPathComponent(), fallbackURL().deletingLastPathComponent()].compactMap({ $0 }) {
+            let legacy = dir.appendingPathComponent(Self.legacyFileName)
+            guard fileManager.fileExists(atPath: legacy.path),
+                  let envelope = try? decode(at: legacy), envelope.network != .bitcoin else { continue }
+            let target = dir.appendingPathComponent(Self.fileName(for: envelope.network))
+            if !fileManager.fileExists(atPath: target.path) {
+                try? fileManager.moveItem(at: legacy, to: target)
+            } else {
+                try? fileManager.removeItem(at: legacy)
+            }
+            let legacyPrev = dir.appendingPathComponent(Self.legacyPreviousFileName)
+            let targetPrev = dir.appendingPathComponent(Self.previousFileName(for: envelope.network))
+            if fileManager.fileExists(atPath: legacyPrev.path) {
+                if !fileManager.fileExists(atPath: targetPrev.path) { try? fileManager.moveItem(at: legacyPrev, to: targetPrev) }
+                else { try? fileManager.removeItem(at: legacyPrev) }
+            }
+            relocated = envelope.network
+        }
+        return relocated
     }
 
     // MARK: - API
@@ -59,6 +110,14 @@ public struct ICloudBackupStore: Sendable {
     }
 
     public func load() async throws -> BackupEnvelope {
+        let envelope = try await loadUnchecked()
+        // The last line of defence: an envelope for another chain is
+        // "no backup" for this one, never a wallet to boot.
+        guard envelope.network == network else { throw WalletKitError.backupNotFound }
+        return envelope
+    }
+
+    private func loadUnchecked() async throws -> BackupEnvelope {
         if let icloud = icloudURL() {
             if !fileManager.fileExists(atPath: icloud.path), fileManager.isUbiquitousItem(at: icloud) {
                 // Ask iCloud to materialize the file, then poll briefly.
@@ -129,7 +188,7 @@ public struct ICloudBackupStore: Sendable {
     // MARK: - Internals
 
     private func previousURL(for url: URL) -> URL {
-        url.deletingLastPathComponent().appendingPathComponent(Self.previousFileName)
+        url.deletingLastPathComponent().appendingPathComponent(previousFileName)
     }
 
     private func keepPreviousCopy(of url: URL) {
