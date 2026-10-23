@@ -34,6 +34,7 @@ targets:
       - HostApp
       - Shared
       - PasskeyShared
+      - DesignSystem
       # QR rendering is shared with the extension's Receive sheet.
       - path: MessagesExtension/Support/QRCodeGenerator.swift
     dependencies:
@@ -98,6 +99,7 @@ targets:
       - MessagesExtension
       - Shared
       - PasskeyShared
+      - DesignSystem
     dependencies:
       - package: WalletKit
     settings:
